@@ -199,7 +199,7 @@
     assert( (result == nil) || ([result length] == 0) || ([NSURL URLWithString:result] != nil) );
     return result;
 }
-
+//Foundation 框架提供的表示属性依赖的机制
 + (NSSet *)keyPathsForValuesAffectingCanSave
 {
     return [NSSet setWithObjects:@"otherChoice", @"choiceIndex", nil];

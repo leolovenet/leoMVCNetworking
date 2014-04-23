@@ -42,6 +42,7 @@
 
 @synthesize dateFormatter = _dateFormatter;
 
+//关闭对 dateFormatter 的自动 KVO 通知
 + (BOOL)automaticallyNotifiesObserversOfDateFormatter
 {
     return NO;

@@ -107,7 +107,7 @@ NSString * kQHTTPOperationErrorDomain = @"kQHTTPOperationErrorDomain";
 
 
 
-
+//关闭对 authenticationDelegate 的自动 KVO 通知
 + (BOOL)automaticallyNotifiesObserversOfAuthenticationDelegate
 {
     return NO;
@@ -132,7 +132,7 @@ NSString * kQHTTPOperationErrorDomain = @"kQHTTPOperationErrorDomain";
 }
 
 
-
+//关闭对 acceptableStatusCodes 的自动 KVO 通知
 + (BOOL)automaticallyNotifiesObserversOfAcceptableStatusCodes
 {
     return NO;
@@ -160,7 +160,7 @@ NSString * kQHTTPOperationErrorDomain = @"kQHTTPOperationErrorDomain";
 
 
 
-
+//关闭对 acceptableContentTypes 的自动 KVO 通知
 + (BOOL)automaticallyNotifiesObserversOfAcceptableContentTypes
 {
     return NO;
@@ -187,7 +187,7 @@ NSString * kQHTTPOperationErrorDomain = @"kQHTTPOperationErrorDomain";
 
 
 
-
+//关闭对 responseOutputStream 的自动 KVO 通知
 + (BOOL)automaticallyNotifiesObserversOfResponseOutputStream
 {
     return NO;
@@ -215,7 +215,7 @@ NSString * kQHTTPOperationErrorDomain = @"kQHTTPOperationErrorDomain";
 
 
 
-
+//关闭对 defaultResponseSize 的自动 KVO 通知
 + (BOOL)automaticallyNotifiesObserversOfDefaultResponseSize
 {
     return NO;
@@ -242,7 +242,7 @@ NSString * kQHTTPOperationErrorDomain = @"kQHTTPOperationErrorDomain";
 
 
 
-
+//关闭对 maximumResponseSize 的自动 KVO 通知
 + (BOOL)automaticallyNotifiesObserversOfMaximumResponseSize
 {
     return NO;
@@ -622,9 +622,9 @@ NSString * kQHTTPOperationErrorDomain = @"kQHTTPOperationErrorDomain";
             if (length == NSURLResponseUnknownLength) {
                 length = self.defaultResponseSize; //如果没有检测到期望长度,采用默认长度(默认1M)
             }
-            if (length <= (long long) self.maximumResponseSize) { //小余最大默认长度(4M)
+            if (length <= (long long) self.maximumResponseSize) {
                 self.dataAccumulator = [NSMutableData dataWithCapacity:(NSUInteger)length];//并不是真正的分配内存, lenght 为 0
-            } else {
+            } else {//大余最大默认长度(4M) 的错误
                 [self finishWithError:[NSError errorWithDomain:kQHTTPOperationErrorDomain code:kQHTTPOperationErrorResponseTooLarge userInfo:nil]];
                 success = NO;
             }
@@ -714,7 +714,7 @@ NSString * kQHTTPOperationErrorDomain = @"kQHTTPOperationErrorDomain";
         assert(self->_responseBody != nil);
     }
     
-    if ( ! self.isStatusCodeAcceptable ) { //如果返回的网络请求回应是 不正常的
+    if ( ! self.isStatusCodeAcceptable ) { //如果返回的网络请求回应是 不正常的,不为我们可以接受的, self.acceptableStatusCodes 默认为nil,暗指 200...299
         [self finishWithError:[NSError errorWithDomain:kQHTTPOperationErrorDomain code:self.lastResponse.statusCode userInfo:nil]];
     } else if ( ! self.isContentTypeAcceptable ) { //检查 接收到的网络数据类型 MIMEType 是否可用,默认为 nil,表示所有的都可用
         [self finishWithError:[NSError errorWithDomain:kQHTTPOperationErrorDomain code:kQHTTPOperationErrorBadContentType userInfo:nil]];

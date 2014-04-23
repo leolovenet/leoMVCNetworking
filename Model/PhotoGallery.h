@@ -14,7 +14,7 @@
     database, adding any photos we haven't seen before and removing any photos that 
     are no longer in the gallery.
 */
-
+/*
 enum PhotoGallerySyncState {
     kPhotoGallerySyncStateStopped, 
     kPhotoGallerySyncStateGetting, 
@@ -22,6 +22,14 @@ enum PhotoGallerySyncState {
     kPhotoGallerySyncStateCommitting
 };
 typedef enum PhotoGallerySyncState PhotoGallerySyncState;
+*/
+
+typedef NS_ENUM(NSUInteger, PhotoGallerySyncState){
+    kPhotoGallerySyncStateStopped,
+    kPhotoGallerySyncStateGetting,
+    kPhotoGallerySyncStateParsing,
+    kPhotoGallerySyncStateCommitting
+};
 
 @class PhotoGalleryContext;
 @class RetryingHTTPOperation;
@@ -37,18 +45,19 @@ typedef enum PhotoGallerySyncState PhotoGallerySyncState;
 
     NSDate *                        _lastSyncDate;
     NSError *                       _lastSyncError;
-    NSDateFormatter *               _standardDateFormatter;
-    PhotoGallerySyncState           _syncState;
+    NSDateFormatter *               _standardDateFormatter; // 代表一个格式化了的时间字符串,初始化为当前时间
+    PhotoGallerySyncState           _syncState;    // 保存上面定义的 enum PhotoGallerySyncState 的值
     RetryingHTTPOperation *         _getOperation;
     GalleryParserOperation *        _parserOperation;
 }
 
-#pragma mark * Start up and shut down
+#pragma mark - Start up and shut down
 
+// Called by the application delegate at startup time.  This takes care of
+// various bits of bookkeeping, including resetting the cache of photos
+// if that debugging option has been set.
 + (void)applicationStartup;
-    // Called by the application delegate at startup time.  This takes care of 
-    // various bits of bookkeeping, including resetting the cache of photos 
-    // if that debugging option has been set.
+
 
 - (id)initWithGalleryURLString:(NSString *)galleryURLString;
 
@@ -57,21 +66,23 @@ typedef enum PhotoGallerySyncState PhotoGallerySyncState;
 - (void)start;
     // Starts up the gallery (finds or creates a cache database and kicks off the initial sync).
 
+
+// Called by the application delegate at -applicationDidEnterBackground: and
+// -applicationWillTerminate: time, respectively.  Note that it's safe, albeit a little
+// weird, to call -save and -stop even if you haven't called -start.
+//
+// -stop is also called by the application delegate when it switches to a new gallery.
 - (void)save;
 - (void)stop;
-    // Called by the application delegate at -applicationDidEnterBackground: and 
-    // -applicationWillTerminate: time, respectively.  Note that it's safe, albeit a little 
-    // weird, to call -save and -stop even if you haven't called -start.
-    //
-    // -stop is also called by the application delegate when it switches to a new gallery.
 
-#pragma mark * Core Data accessors
+
+#pragma mark - Core Data accessors
 
 // These properties are exported for the benefit of the PhotoGalleryViewController class, which 
 // uses them to set up its fetched results controller.
 
 @property (nonatomic, retain, readonly ) NSManagedObjectContext *   managedObjectContext;       // observable
-@property (nonatomic, retain, readonly ) NSEntityDescription *      photoEntity;
+@property (nonatomic, retain, readonly ) NSEntityDescription *      photoEntity;//为执行 executeFetchRequest 需要的NSFetchRequest 对象,创建一个NSEntityDescription对象
     // Returns the entity description for the "Photo" entity in our database.
 
 #pragma mark * Syncing

@@ -32,13 +32,14 @@ extern const CGFloat kThumbnailSize;
     NSError *                   _photoGetError;
 }
 
+// Creates a photo with the specified properties in the specified context.
+// The properties dictionary is keyed by property names, in a KVC fashion.
 + (Photo *)insertNewPhotoWithProperties:(NSDictionary *)properties inManagedObjectContext:(NSManagedObjectContext *)managedObjectContext;
-    // Creates a photo with the specified properties in the specified context. 
-    // The properties dictionary is keyed by property names, in a KVC fashion.
 
+
+// Updates the photo with the specified properties.  This will update the various
+// readonly properties listed below, triggering KVO notifications along the way.
 - (void)updateWithProperties:(NSDictionary *)properties;
-    // Updates the photo with the specified properties.  This will update the various 
-    // readonly properties listed below, triggering KVO notifications along the way.
 
 @property (nonatomic, retain, readonly ) NSString *     photoID;                // immutable, unique ID for the photo within this database
 @property (nonatomic, retain, readonly ) NSString *     displayName;            // observable, user-visible name of the photo
@@ -51,6 +52,7 @@ extern const CGFloat kThumbnailSize;
 
 @property (nonatomic, retain, readonly ) UIImage *      thumbnailImage;         // observable, returns a placeholder if the thumbnail isn't available yet.
 @property (nonatomic, retain, readonly ) UIImage *      photoImage;             // observable, returns nil if the photo isn't available yet
+
 
 // The Photo object does not download the full photo (that is, photoImage) unless someone wants to 
 // display it.  Clients should register and unregister their interest in the full photo using these 

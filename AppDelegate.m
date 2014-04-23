@@ -30,7 +30,6 @@
 #define APPLICATON_CLEAR_SETUP @"applicationClearSetup"
 
 
-
 #pragma mark - UIApplicationDelegate
 
 - (void)applicationDidFinishLaunching:(UIApplication *)application

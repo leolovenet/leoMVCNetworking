@@ -15,9 +15,12 @@
 // private properties
 @property (nonatomic, assign, readonly ) NSUInteger                 sequenceNumber;
 @property (nonatomic, retain, readwrite) PhotoGalleryContext *      galleryContext;
+
+//当前 gallery 的 cache 目录.例如:"~/Library/Cache/Gallery419574630.724151015.gallery"
 @property (nonatomic, copy,   readonly ) NSString *                 galleryCachePath;
+
 @property (nonatomic, retain, readwrite) NSTimer *                  saveTimer;
-@property (nonatomic, assign, readwrite) PhotoGallerySyncState      syncState;
+@property (nonatomic, assign, readwrite) PhotoGallerySyncState      syncState;  //同步状态值
 @property (nonatomic, retain, readwrite) RetryingHTTPOperation *    getOperation;
 @property (nonatomic, retain, readwrite) GalleryParserOperation *   parserOperation;
 @property (nonatomic, copy,   readwrite) NSDate *                   lastSyncDate;
@@ -51,11 +54,11 @@ static NSString * kGalleryExtension    = @"gallery";
 static NSString * kInfoFileName        = @"GalleryInfo.plist";
 static NSString * kDatabaseFileName    = @"Gallery.db";
 
-// 注意 kPhotosDirectoryName 没有用 static 存储修饰符,因为在 PhotoGalleryContext.m 文件中声明了 extern 存储修饰符.
-// 一般一个变量 只能有一个 存储修饰符.
-// 这里 static means Internal Linkage, extern means External Linkage.
-// Internal Linkage refers to everything only in scope of a translation unit (编译单元, 所谓编译单元( translation unit ) 基本上它是单一源码文件加上其所含入的头文).
-// External Linkage refers to things that exist beyond a particular translation unit. In other words, accessable through the whole program.
+// 注意 kPhotosDirectoryName 没有用 "static" 存储修饰符,因为在 PhotoGalleryContext.m 文件中声明了 "extern" 存储修饰符.
+// 一般一个变量 只能有一个 存储修饰符. 这两个存储修饰符是互斥的,为什么呢?
+// 这里 "static" means Internal Linkage, "extern" means External Linkage.
+// [Internal Linkage] refers to everything only in scope of a translation unit (编译单元, 所谓编译单元( translation unit ) 基本上它是单一源码文件加上其所含入的头文件).
+// [External Linkage] refers to things that exist beyond a particular translation unit. In other words, accessable through the whole program.
 // So both are mutually exclusive (互相排斥的).
        NSString * kPhotosDirectoryName = @"Photos";
 
@@ -77,10 +80,10 @@ static NSString * kGalleryInfoKeyGalleryURLString = @"gallerURLString";
 @synthesize lastSyncError = _lastSyncError;
 
 #pragma mark - Class Methods
-//查找本程序的 Caches 目录的绝对路径
+// Returns the path to the caches directory.
+// This is a class method because it's used by [self applicationStartup]
+// 查找本程序的 Caches 目录的绝对路径
 + (NSString *)cachesDirectoryPath
-    // Returns the path to the caches directory.  This is a class method because it's 
-    // used by [self applicationStartup]
 {
     NSString *      result;
     NSArray *       paths;
@@ -98,11 +101,6 @@ static NSString * kGalleryInfoKeyGalleryURLString = @"gallerURLString";
 + (void)abandonGalleryCacheAtPath:(NSString *)galleryCachePath
 {
     (void) [[NSFileManager defaultManager] removeItemAtPath:[galleryCachePath stringByAppendingPathComponent:kInfoFileName] error:NULL];
-}
-
-+ (BOOL)automaticallyNotifiesObserversOfSyncState
-{
-    return NO;
 }
 
 /*!
@@ -205,12 +203,12 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
     NSArray*  potentialGalleryCacheNames = [fileManager contentsOfDirectoryAtPath:cachesDirectoryPath error:NULL];
     assert(potentialGalleryCacheNames != nil);
     
-    //
+
     NSMutableArray* liveGalleryCachePathsAndDates = [NSMutableArray array];
     assert(liveGalleryCachePathsAndDates != nil);
     
     for (NSString * galleryCacheName in potentialGalleryCacheNames) {
-        //那些带 .gallery 后缀的文件才是缓存目录
+        //那些带 .gallery 后缀的文件就是缓存目录
         if ([galleryCacheName hasSuffix:kGalleryExtension]) {
         
             NSString* galleryCachePath = [cachesDirectoryPath stringByAppendingPathComponent:galleryCacheName];
@@ -292,7 +290,7 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
     // relaunched.
     
     // 开启一个 operation 去删除那些无用的 gallery caches.
-    // 这个operation 在一个独立的线程上执行,这样它就无法阻止程序的启动了.
+    // 这个operation 在一个独立的线程上执行,这样它就无法拖延程序的启动了.
     // 程序将要忽略掉那些我们记录下来的要删除的缓存目录,因为我们已经把目录里的 galleryInfo.plist文件了.
     // 并且,我们不监控这个操作是否顺利完成,它完成后会自动退出的. 就是说我们漏掉这个操作队列的其他处理.
     // 这并没有什么大不了的. 这意味着,如果 app 在删除操作没有完成以前就退出的话,这个操作就被杀死了.
@@ -334,7 +332,7 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
         //添加一个监控,等到程序变为 active 后,调用 didBecomeActive: 方法
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(didBecomeActive:) name:UIApplicationDidBecomeActiveNotification object:nil];
         
-        [[QLog log] logWithFormat:@"gallery %zu is %@", (size_t) self->_sequenceNumber, galleryURLString];
+        [[QLog log] logWithFormat:@"%s gallery %zu is %@",__PRETTY_FUNCTION__, (size_t) self->_sequenceNumber, galleryURLString];
     }
     return self;
 }
@@ -380,7 +378,7 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
 }
 
 #pragma mark * Core Data wrangling
-
+//Foundation 框架提供的表示属性依赖的机制
 + (NSSet *)keyPathsForValuesAffectingManagedObjectContext
 {
     return [NSSet setWithObject:@"galleryContext"];
@@ -391,6 +389,9 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
     return self.galleryContext;
 }
 
+
+//为执行 executeFetchRequest 需要的 NSFetchRequest 对象,创建一个NSEntityDescription对象
+//在下面的 - (NSFetchRequest *)photosFetchRequest 方法里调用,PhotoGalleryViewcontroller里startFetcher方法也会调用
 - (NSEntityDescription *)photoEntity
 {
     if (self->_photoEntity == nil) {
@@ -401,8 +402,13 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
     return self->_photoEntity;
 }
 
+
+/*!
+ *  为执行 executeFetchRequest 返回一个 NSFetchRequest
+ *
+ *  Returns a fetch request that gets all of the photos in the database.
+ */
 - (NSFetchRequest *)photosFetchRequest
-    // Returns a fetch request that gets all of the photos in the database.
 {
     NSFetchRequest *    fetchRequest;
     
@@ -452,7 +458,7 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
             
             //读取 GalleryInfo.plist 文件的内容到字典文件中, 用到的方法是 dictionaryWithContentsOfFile:
             galleryInfo = [NSDictionary dictionaryWithContentsOfFile:[
-                                                                      // ~/Lib/Cache/*****.gallery/GalleryInfo.plist
+                                     // ~/Lib/Cache/*****.gallery/GalleryInfo.plist
                                     [cachesDirectoryPath stringByAppendingPathComponent:galleryName]
                                     stringByAppendingPathComponent:kInfoFileName]
                            ];
@@ -494,16 +500,16 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
         [[QLog log] logWithFormat:@"gallery %zu created new '%@'", (size_t) self.sequenceNumber, galleryName];
     } else {
         assert(galleryName != nil);
-        [[QLog log] logWithFormat:@"gallery %zu found existing '%@'", (size_t) self.sequenceNumber, galleryName];
+        [[QLog log] logWithFormat:@"%s gallery %zu found existing '%@'",__PRETTY_FUNCTION__, (size_t) self.sequenceNumber, galleryName];
     }
     
     return result;
 }
 
-//调用类同名方法, 删除 Caches/****.gallery/的GalleryInfo.plist 文件, 这样下次 cache 目录就不会被使用了
+// Abandons the specified gallery cache directory.  We do this simply by removing the gallery info file.
+// The directory will be deleted when the application is next launched.
+// 调用本类的同名"类方法", 删除 Caches/****.gallery/的GalleryInfo.plist 文件, 这样下次 cache 目录就不会被使用了
 - (void)abandonGalleryCacheAtPath:(NSString *)galleryCachePath
-    // Abandons the specified gallery cache directory.  We do this simply by removing the gallery info file.
-    // The directory will be deleted when the application is next launched.
 {
     assert(galleryCachePath != nil);
 
@@ -512,21 +518,27 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
     [[self class] abandonGalleryCacheAtPath:galleryCachePath];
 }
 
+
+// 在下面的 setupGalleryContext 里初始化为: 当前 gallery 的 cache 目录的绝对路径.
+//      cache目录的命名是在上面的方法 galleryCachePathForOurGallery 中订立的
+//      例如:  @"~/Library/Cache/" + [NSString stringWithFormat:@"Gallery%.9f.%@", [NSDate timeIntervalSinceReferenceDate],@".gallery"]
+//      ==>   @"~/Library/Cache/Gallery419574630.724151015.gallery"
 - (NSString *)galleryCachePath
 {
     assert(self.galleryContext != nil);
     return self.galleryContext.galleryCachePath;
 }
 
+
 #pragma mark - init galleryContext
+// Attempt to start up the gallery cache for our gallery URL string, either by finding an existing
+// cache or by creating one from scratch.  On success, self.galleryCachePath will point to that
+// gallery cache and self.galleryContext will be the managed object context for the database  within the gallery cache.
+// 尝试着要设置一个 gallery cache 为我们指定的 gallery URL.
+// 或者查找现有的,或者从 scratch 中创建一个.
+// 当成功后, self.galleryCachePath 会指向这个 gallery cache
+// 而后伴随, self.galleryContext 将会成为这个 gallery cache 的 Managed Object Context
 - (BOOL)setupGalleryContext
-    // Attempt to start up the gallery cache for our gallery URL string, either by finding an existing 
-    // cache or by creating one from scratch.  On success, self.galleryCachePath will point to that 
-    // gallery cache and self.galleryContext will be the managed object context for the database  within the gallery cache.
-    // 尝试着要设置一个 gallery cache 为我们指定的 gallery URL.
-    // 或者查找现有的,或者从 scratch 中创建一个.
-    // 当成功后, self.galleryCachePath 会指向这个 gallery cache
-    // 而后伴随, self.galleryContext 将会成为这个 gallery cache 的 Managed Object Context
 {
     BOOL                            success;
     NSError *                       error;
@@ -540,7 +552,7 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
 
     assert(self.galleryURLString != nil);
     
-    [[QLog log] logWithFormat:@"gallery %zu starting", (size_t) self.sequenceNumber];  // self.sequenceNumber 初始化时为0,表示第几个  gallery 展示
+    [[QLog log] logWithFormat:@"%s gallery %zu starting",__PRETTY_FUNCTION__, (size_t) self.sequenceNumber];  // self.sequenceNumber 初始化时为0,表示第几个  gallery 展示
     
     error = nil;
     
@@ -561,7 +573,6 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
         success = [fileManager fileExistsAtPath:photosDirectoryPath isDirectory:&isDir] && isDir;
         if ( ! success ) {
             // 创建  "~/Library/Cache/****.gallery/Photos/"
-            // TODO: 在仔细看看这个创建目录的函数!
             success = [fileManager createDirectoryAtPath:photosDirectoryPath withIntermediateDirectories:NO attributes:NULL error:NULL];
         }
     }
@@ -626,7 +637,7 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
                                                      name:NSManagedObjectContextObjectsDidChangeNotification
                                                    object:self.managedObjectContext];
 
-        [[QLog log] logWithFormat:@"gallery %zu started '%@'", (size_t) self.sequenceNumber, [self.galleryCachePath lastPathComponent]];
+        [[QLog log] logWithFormat:@"%s gallery %zu started '%@'",__PRETTY_FUNCTION__, (size_t) self.sequenceNumber, [self.galleryCachePath lastPathComponent]];
         
     } else {
         // Bad things happened.  Log the error and return NO.
@@ -646,8 +657,8 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
     return success;
 }
 
+
 - (void)start
-    // See comment in header.
 {
     BOOL   success;
     assert(self.galleryURLString != nil);
@@ -673,7 +684,6 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
 #pragma mark - save Core Data
 
 - (void)save
-    // See comment in header.
 {
     NSError *       error;
     error = nil;
@@ -691,18 +701,16 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
     }
     // Log the results.
     if (error == nil) {
-        [[QLog log] logWithFormat:@"gallery %zu saved", (size_t) self.sequenceNumber];
+        [[QLog log] logWithFormat:@"%s gallery %zu saved", __PRETTY_FUNCTION__ ,(size_t) self.sequenceNumber];
     } else {
-        [[QLog log] logWithFormat:@"gallery %zu save error %@", (size_t) self.sequenceNumber, error];
+        [[QLog log] logWithFormat:@"%s gallery %zu save error %@",__PRETTY_FUNCTION__, (size_t) self.sequenceNumber, error];
     }
 }
 
 #pragma mark - managed object context notification arrived
+// Called when the managed object context changes (courtesy of the NSManagedObjectContextObjectsDidChangeNotification notification).
+// We start an auto-save timer to fire in 5 seconds.  This means that rapid-fire changes don't cause a flood of saves.
 - (void)contextChanged:(NSNotification *)note
-    // Called when the managed object context changes (courtesy of the 
-    // NSManagedObjectContextObjectsDidChangeNotification notification).  We start an 
-    // auto-save timer to fire in 5 seconds.  This means that rapid-fire changes don't 
-    // cause a flood of saves.
 {
     #pragma unused(note)
     if (self.saveTimer != nil) {
@@ -711,13 +719,19 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
     self.saveTimer = [NSTimer scheduledTimerWithTimeInterval:5.0 target:self selector:@selector(save) userInfo:nil repeats:NO];
 }
 
+
+/*
+    Shuts down our access to the gallery cache.  We do this in two situations:
+        o When the user switches gallery.
+        o When the application terminates.
+ 
+ // Called by the application delegate at -applicationDidEnterBackground: and
+ // -applicationWillTerminate: time, respectively.  Note that it's safe, albeit(althought) a little
+ // weird, to call -save and -stop even if you haven't called -start.
+
+ 
+ */
 - (void)stop
-    // See comment in header.
-    //
-    // Shuts down our access to the gallery cache.  We do this in two situations:
-    //
-    // o When the user switches gallery.
-    // o When the application terminates.
 {
     [self stopSync];
     
@@ -734,22 +748,23 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
         self.photoEntity = nil;
         self.galleryContext = nil;
     }
-    [[QLog log] logWithFormat:@"gallery %zu stopped", (size_t) self.sequenceNumber];
+    [[QLog log] logWithFormat:@"%s gallery %zu stopped",__PRETTY_FUNCTION__, (size_t) self.sequenceNumber];
 }
 
 
-
+//Foundation 框架提供的表示属性依赖的机制
 + (NSSet *)keyPathsForValuesAffectingSyncStatus
 {
     return [NSSet setWithObjects:@"syncState", @"lastSyncError", @"standardDateFormatter", @"lastSyncDate", @"getOperation.retryStateClient", nil];
 }
 
+
 - (NSString *)syncStatus
-    // See comment in header.
 {
     NSString *  result;
     
     if (self.lastSyncError == nil) {
+        
         switch (self.syncState) {
             case kPhotoGallerySyncStateStopped: {
                 if (self.lastSyncDate == nil) {
@@ -758,6 +773,7 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
                     result = [NSString stringWithFormat:@"Updated: %@", [self.standardDateFormatter stringFromDate:self.lastSyncDate]];
                 }
             } break;
+                
             default: {
                 if ( (self.getOperation != nil) && (self.getOperation.retryStateClient == kRetryingHTTPOperationStateWaitingToRetry) ) {
                     result = @"Waiting for network";
@@ -766,7 +782,9 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
                 }
             } break;
         }
+        
     } else {
+        
         if ([[self.lastSyncError domain] isEqual:NSCocoaErrorDomain] && [self.lastSyncError code] == NSUserCancelledError) {
             result = @"Update cancelled";
         } else {
@@ -775,12 +793,51 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
             // Users don't understand "Connection reset by peer" anyway (-:
             result = @"Update failed";
         }
+        
     }
     return result;
 }
 
+
+//Foundation 框架提供的表示属性依赖的机制
++ (NSSet *)keyPathsForValuesAffectingSyncing
+{
+    return [NSSet setWithObject:@"syncState"];
+}
+
+
+//关闭对 syncState 的自动 KVO 通知
++ (BOOL)automaticallyNotifiesObserversOfSyncState
+{
+    return NO;
+}
+
+// 操作是否在运行中
+- (BOOL)isSyncing
+{
+    return (self->_syncState > kPhotoGallerySyncStateStopped);
+}
+
+- (void)setSyncState:(PhotoGallerySyncState)newValue
+{
+    if (newValue != self->_syncState) {
+        BOOL    isSyncingChanged;
+        
+        isSyncingChanged = (self->_syncState > kPhotoGallerySyncStateStopped) != (newValue > kPhotoGallerySyncStateStopped);
+        [self willChangeValueForKey:@"syncState"];
+        if (isSyncingChanged) {
+            [self willChangeValueForKey:@"syncing"];
+        }
+        self->_syncState = newValue;
+        if (isSyncingChanged) {
+            [self didChangeValueForKey:@"syncing"];
+        }
+        [self didChangeValueForKey:@"syncState"];
+    }
+}
+
+// 代表一个格式化了的时间字符串,初始化为当前时间
 - (NSDateFormatter *)standardDateFormatter
-    // See comment in header.
 {
     if (self->_standardDateFormatter == nil) {
         self->_standardDateFormatter = [[NSDateFormatter alloc] init];
@@ -792,15 +849,25 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
         // Watch for changes in the locale and time zone so that we can update 
         // our date formatter accordingly.
         
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updateStandardDateFormatter:) name:NSCurrentLocaleDidChangeNotification  object:nil];
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updateStandardDateFormatter:) name:NSSystemTimeZoneDidChangeNotification object:nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(updateStandardDateFormatter:)
+                                                     name:NSCurrentLocaleDidChangeNotification
+                                                   object:nil];
+        
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(updateStandardDateFormatter:)
+                                                     name:NSSystemTimeZoneDidChangeNotification
+                                                   object:nil];
     }
+    
     return self->_standardDateFormatter;
 }
 
+
+// 当当前的 locale 改变后,或者 TimeZone 改变后,调用本方法.
+// Called when either the current locale or the current time zone changes.
+// We respond by applying the latest values to our date formatter.
 - (void)updateStandardDateFormatter:(NSNotification *)note
-    // Called when either the current locale or the current time zone changes. 
-    // We respond by applying the latest values to our date formatter.
 {
     #pragma unused(note)
     NSDateFormatter *   df;
@@ -812,13 +879,17 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
     [self didChangeValueForKey:@"standardDateFormatter"];
 }
 
+
+
+//关闭对 lastSyncError 的自动 KVO 通知
 + (BOOL)automaticallyNotifiesObserversOfLastSyncError
 {
     return NO;
 }
 
+// We override this setter purely so that we can log the error.
+// 设定在 Sync 中遇到的错误值
 - (void)setLastSyncError:(NSError *)newValue
-    // We override this setter purely so that we can log the error.
 {
     assert([NSThread isMainThread]);
 
@@ -834,7 +905,9 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
     }
 }
 
-#pragma mark  -  开始一个 HTTP GET 请求获得 photo gllery XML, 由 start->startSync-> 调用
+
+
+#pragma mark  -  开始一个执行 Operation, 由 startSync/stopSync  调用
 // Starts the HTTP operation to GET the photo gallery's XML.
 - (void)startGetOperation
    {
@@ -842,11 +915,11 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
 
     assert(self.syncState == kPhotoGallerySyncStateStopped);
 
-    [[QLog log] logOption:kLogOptionSyncDetails withFormat:@"gallery %zu sync get start", (size_t) self.sequenceNumber];
+    [[QLog log] logOption:kLogOptionSyncDetails withFormat:@"%s gallery %zu sync get start", __PRETTY_FUNCTION__ ,(size_t) self.sequenceNumber];
 
      // 为什么要把 requestToGetGalleryRelativeString 放到 galleryContext 类里呢?
      // readme 里面提到了,这是一个 NSMangedObjectContext 的子类. 它存放着关于 photo gallery 的信息.
-     // 这允许管理对象,特别是 Photo 对象获得 gallery 状态,像gallery的URL等信息.
+     // 这允许管理对象,特别是 Photo 对象获得 gallery 状态,例如gallery的URL等信息.
     request = [self.galleryContext requestToGetGalleryRelativeString:nil];
     assert(request != nil);
     
@@ -883,7 +956,7 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
     assert(operation == self.getOperation);
     assert(self.syncState == kPhotoGallerySyncStateGetting);
     
-    [[QLog log] logOption:kLogOptionSyncDetails withFormat:@"gallery %zu sync listing done", (size_t) self.sequenceNumber];
+    [[QLog log] logOption:kLogOptionSyncDetails withFormat:@"%s gallery %zu sync listing done",__PRETTY_FUNCTION__, (size_t) self.sequenceNumber];
     
     error = operation.error;
     if (error != nil) { //请求有错误,没有成功.
@@ -900,26 +973,35 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
     self.getOperation = nil;
 }
 
+
+// Starts the operation to parse the gallery's XML.
+// 创建 GalleryParserOperation operation 对象,并将此 operation 入列到 main thread 上执行
 - (void)startParserOperationWithData:(NSData *)data
-    // Starts the operation to parse the gallery's XML.
 {
     assert(self.syncState == kPhotoGallerySyncStateGetting);
 
-    [[QLog log] logOption:kLogOptionSyncDetails withFormat:@"gallery %zu sync parse start", (size_t) self.sequenceNumber];
+    [[QLog log] logOption:kLogOptionSyncDetails withFormat:@"%s gallery %zu sync parse start", __PRETTY_FUNCTION__, (size_t) self.sequenceNumber];
 
     assert(self.parserOperation == nil);
+    
+    // GalleryParserOperation 类为一个重写了 main 方法继承自 NSOperation 的子类, 将这个 operation 添加到 queue 后,当 main 方法返回时，这个NSOperation就结束了.
+    // GalleryParserOperation 类会 copy 一份 data
     self.parserOperation = [[[GalleryParserOperation alloc] initWithData:data] autorelease];
     assert(self.parserOperation != nil);
 
     [self.parserOperation setQueuePriority:NSOperationQueuePriorityNormal];
     
+    //入列,开始执行 main 方法, 添加到 NetworkManger 的CPU队列(queueForCPU)上执行,也就是在main thread 上面执行,指定回调函数parserOperationDone:
     [[NetworkManager sharedManager] addCPUOperation:self.parserOperation finishedTarget:self action:@selector(parserOperationDone:)];
 
-    self.syncState = kPhotoGallerySyncStateParsing;
+    self.syncState = kPhotoGallerySyncStateParsing; // 改变动作状态为 Parsing
 }
+
 
 // Called when the operation to parse the gallery's XML completes.
 // If all went well we commit the results to our database.
+
+//在 main thread 上分析完网络下载的新 xml 文件后的回调函数, 结果保存在 operation.results 中,是把每个 xml 中 photo 元素属性组成的dictionary,存放到的一个 array.
 - (void)parserOperationDone:(GalleryParserOperation *)operation
 {
     assert([NSThread isMainThread]);
@@ -927,18 +1009,18 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
     assert(operation == self.parserOperation);
     assert(self.syncState == kPhotoGallerySyncStateParsing);
 
-    [[QLog log] logOption:kLogOptionSyncDetails withFormat:@"gallery %zu sync parse done", (size_t) self.sequenceNumber];
+    [[QLog log] logOption:kLogOptionSyncDetails withFormat:@"%s gallery %zu sync parse done",__PRETTY_FUNCTION__, (size_t) self.sequenceNumber];
     
-    if (operation.error != nil) {
+    if (operation.error != nil) { // 分析 xml 有错误
         self.lastSyncError = operation.error;
         self.syncState = kPhotoGallerySyncStateStopped;
     } else {
         [self commitParserResults:operation.results];
         
         assert(self.lastSyncError == nil);
-        self.lastSyncDate = [NSDate date];
+        self.lastSyncDate = [NSDate date];  //保存一个时间戳
         self.syncState = kPhotoGallerySyncStateStopped;
-        [[QLog log] logWithFormat:@"gallery %zu sync success", (size_t) self.sequenceNumber];
+        [[QLog log] logWithFormat:@"%s gallery %zu sync success",__PRETTY_FUNCTION__, (size_t) self.sequenceNumber];
     }
 
     self.parserOperation = nil;
@@ -1002,60 +1084,76 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
 }
 #endif
 
+
+/*!
+   网络下载的 xml 文件分析完后,提交由每个 Photo 元素(以字典形式保存)组成 Array 结果到这个函数
+ 
+   本函数检查 core data 中是否存在这个 photo:
+        如果有存在就更新为最新的properties.
+        如果没有存在,就创建一个新的 Photo 对象
+ 
+   如果在 core data 中存在的 photo 没有在新的 xml 文件中存在,那么将它从 core data 中删除
+ 
+   Commits the results of parsing our the gallery's XML to the Core Data database.
+ 
+ *  @param parserResults
+ */
 - (void)commitParserResults:(NSArray *)parserResults
-    // Commits the results of parsing our the gallery's XML to the Core Data database.
 {
     NSError *           error;
     NSDate *            syncDate;
-    NSArray *           knownPhotos;    // of Photo
 
-    syncDate = [NSDate date];
+    syncDate = [NSDate date]; //当前的时间戳
     assert(syncDate != nil);
 
     // Start by getting all of the photos that we currently have in the database.
-
+    // 我们当前 在数据库里 已经有的所有 photos
+    NSArray *           knownPhotos;    // of Photo
     knownPhotos = [self.galleryContext executeFetchRequest:[self photosFetchRequest] error:&error];
     assert(knownPhotos != nil);
-    if (knownPhotos != nil) {
-        NSMutableSet *          photosToRemove;
-        NSMutableDictionary *   photoIDToKnownPhotos;
-        NSMutableSet *          parserIDs;
-        Photo *                 knownPhoto;
+    
+    if (knownPhotos != nil) { // 有错误返回 nil,没有错误,但是没有匹配的,返回空 array
         
-        // For each photo found in the XML, get the corresponding Photo object 
-        // (based on the photoID).  If there is one, update it based on the new 
-        // properties from the XML (this may cause the photo to get new thumbnail 
-        // and photo images, and trigger significant UI updates).  If there isn't an 
-        // existing photo, create one based on the properties from the XML.
+        // For each photo found in the XML, get the corresponding Photo object (based on the photoID).
+        // If there is one, update it based on the new properties from the XML (this may cause the photo to get new thumbnail
+        // and photo images, and trigger significant(important) UI updates).
+        // If there isn't an existing photo, create one based on the properties from the XML.
+
         
-        // Create photosToRemove, which starts out as a set of all the photos we know 
-        // about.  As we refresh each existing photo, we remove it from this set.  Any 
-        // photos left over are no longer present in the XML, and we remove them.
-        
-        photosToRemove = [NSMutableSet setWithArray:knownPhotos];
+        // Create photosToRemove, which starts out as a set of all the photos we know about.
+        // As we refresh each existing photo, we remove it from this set.
+        // Any photos left over are no longer present in the XML, and we remove them.
+        // 任何存在与Core Data 中,但是不再存在于 XML 中的,删除他们.
+        NSMutableSet *  photosToRemove;
+        photosToRemove = [NSMutableSet setWithArray:knownPhotos]; // 默认是初始化所有的在 Core Data 中的 Photo 对象,都标记为删除,除非新获取的 xml 中包含此 photoID
         assert(photosToRemove != nil);
         
-        // Create photoIDToKnownPhotos, which is a map from photoID to photo.  We use this 
-        // to quickly determine if a photo with a specific photoID currently exists.
+        // Create photoIDToKnownPhotos, which is a map from photoID to photo.
+        // We use this to quickly determine if a photo with a specific photoID currently exists.
         
+        // 存在与 Core Data 中, 基于 Photo 元素的属性 ID ,和该 ID 属性对应的 Photo 对象 map 组成的 Dictionary
+        NSMutableDictionary *   photoIDToKnownPhotos;
         photoIDToKnownPhotos = [NSMutableDictionary dictionary];
         assert(photoIDToKnownPhotos != nil);
         
+        Photo *   knownPhoto;
         for (knownPhoto in knownPhotos) {
             assert([knownPhoto isKindOfClass:[Photo class]]);
             
             [photoIDToKnownPhotos setObject:knownPhoto forKey:knownPhoto.photoID];
         }
         
-        // Finally, create parserIDs, which is set of all the photoIDs that have come in 
-        // from the XML.  We use this to detect duplicate photoIDs in the incoming XML.  
+        
+        // Finally, create parserIDs, which is set of all the photoIDs that have come in  from the XML.
+        // We use this to detect duplicate photoIDs in the incoming XML.
         // It would be bad to have two photos with the same ID.
         
-        parserIDs = [NSMutableSet set];
+        //将用于保存从网络 XML 中获得的 PhotoID, PhotoID 不能有重复的,所以采用 Set 数据格式.
+        NSMutableSet *  parserIDs = [NSMutableSet set];
         assert(parserIDs != nil);
         
         // Iterate through the incoming XML results, processing each one in turn.
-        
+        // 轮询处理我们从网络下载的 photo 元素组成的数组 parserResults  (其中每个 photo 元素是由其属性以及包含的 image子标签属性,组成的dictionary 数据结构)
         for (NSDictionary * parserResult in parserResults) {
             NSString *  photoID;
                         
@@ -1063,16 +1161,14 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
             assert([photoID isKindOfClass:[NSString class]]);
             
             // Check for duplicates.
-            
-            if ([parserIDs containsObject:photoID]) {
+            if ([parserIDs containsObject:photoID]) { // 是否是重复的photoID对象
                 [[QLog log] logOption:kLogOptionSyncDetails withFormat:@"gallery %zu sync duplicate photo %@", (size_t) self.sequenceNumber, photoID];
             } else {
-                NSDictionary *  properties;
                 
                 [parserIDs addObject:photoID];
             
                 // Build a properties dictionary, used by both the create and update code paths.
-                
+                NSDictionary *  properties;
                 properties = [NSDictionary dictionaryWithObjectsAndKeys:
                     photoID,                                                        @"photoID",
                     [parserResult objectForKey:kGalleryParserResultName],           @"displayName", 
@@ -1084,22 +1180,27 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
                 assert(properties != nil);
             
                 // See whether we know about this specific photoID.
-                
+                // 检查从网络中获取的此 Photo,是否已经存在于从 Core Data 获取 Photo 对象中
                 knownPhoto = [photoIDToKnownPhotos objectForKey:photoID];
-                if (knownPhoto != nil) {
                 
-                    // Yes.  Give the photo a chance to update itself from the incoming properties.
-                
-                    [[QLog log] logOption:kLogOptionSyncDetails withFormat:@"gallery %zu sync refresh %@", (size_t) self.sequenceNumber, photoID];
-                    [photosToRemove removeObject:knownPhoto];
+                if (knownPhoto != nil) {//已经在 core Data
                     
-                    [knownPhoto updateWithProperties:properties];
+                    // Yes.  Give the photo a chance to update itself from the incoming properties.
+                    [[QLog log] logOption:kLogOptionSyncDetails withFormat:@"%s gallery %zu sync refresh %@",__PRETTY_FUNCTION__, (size_t) self.sequenceNumber, photoID];
+                    [photosToRemove removeObject:knownPhoto]; // 已经存在的话,就不用删除此对象了
+                    
+                    [knownPhoto updateWithProperties:properties]; // 更新此 Photo 对象的属性
+                    
                 } else {
-                
                     // No.  Create a new photo with the specified properties.
+                    // 没有存在 Core Data ,那么创建一个新的
                     
                     [[QLog log] logOption:kLogOptionSyncDetails withFormat:@"gallery %zu sync create %@", (size_t) self.sequenceNumber, photoID];
+                    
+                    
+                    //这将导致将新的 Photo 对象插入到 self.galleryContext 中,稍后会得到 KVO 的通知,而调用 save 函数,保存数据.
                     knownPhoto = [Photo insertNewPhotoWithProperties:properties inManagedObjectContext:self.galleryContext];
+                    
                     assert(knownPhoto != nil);
                     assert(knownPhoto.photoID        != nil);
                     assert(knownPhoto.localPhotoPath == nil);
@@ -1111,9 +1212,10 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
         }
 
         // Remove any photos that are no longer present in the XML.
+        // 删除所有存在与 Core Data 中,但是已经不存在于新获取的 XML 中的 Photo 对象
         for (knownPhoto in photosToRemove) {
             [[QLog log] logOption:kLogOptionSyncDetails withFormat:@"gallery %zu sync delete %@", (size_t) self.sequenceNumber, knownPhoto.photoID];
-            [self.galleryContext deleteObject:knownPhoto];
+            [self.galleryContext deleteObject:knownPhoto]; //从 core data 中删除
         }
     }
     
@@ -1122,42 +1224,14 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
     #endif
 }
 
-+ (NSSet *)keyPathsForValuesAffectingSyncing
-{
-    return [NSSet setWithObject:@"syncState"];
-}
-
-// 操作是否在运行中 
-- (BOOL)isSyncing
-{
-    return (self->_syncState > kPhotoGallerySyncStateStopped);
-}
-
-- (void)setSyncState:(PhotoGallerySyncState)newValue
-{
-    if (newValue != self->_syncState) {
-        BOOL    isSyncingChanged;
-        
-        isSyncingChanged = (self->_syncState > kPhotoGallerySyncStateStopped) != (newValue > kPhotoGallerySyncStateStopped);
-        [self willChangeValueForKey:@"syncState"];
-        if (isSyncingChanged) {
-            [self willChangeValueForKey:@"syncing"];
-        }
-        self->_syncState = newValue;
-        if (isSyncingChanged) {
-            [self didChangeValueForKey:@"syncing"];
-        }
-        [self didChangeValueForKey:@"syncState"];
-    }
-}
 
 // Force a sync to start right now.  Does nothing if a sync is already in progress.
 - (void)startSync
 {
     if ( ! self.isSyncing ) {
-        //类型为 PhotoGallerySyncState 默认初始化就为 kPhotoGallerySyncStateStopped, 检测self.syncState 是否为默认值
+        //类型为 PhotoGallerySyncState 默认初始化就为 kPhotoGallerySyncStateStopped, 检测 self.syncState 是否为默认值
         if (self.syncState == kPhotoGallerySyncStateStopped) {
-            [[QLog log] logWithFormat:@"gallery %zu sync start", (size_t) self.sequenceNumber];
+            [[QLog log] logWithFormat:@"%s gallery %zu sync start",__PRETTY_FUNCTION__, (size_t) self.sequenceNumber];
             assert(self.getOperation == nil);
             self.lastSyncError = nil;
             
@@ -1171,17 +1245,21 @@ App 的 Library目录结构,每个 App 的 Library 都是独立的
 - (void)stopSync
 {
     if (self.isSyncing) {
+         // getOperation 在 startGetOperation 方法中被初始化为RetryingHTTPOperation的一个对象,然后加入到 NetworkMangeer 的网络管理队列(queueForNetworkManagement)
         if (self.getOperation != nil) {
             [[NetworkManager sharedManager] cancelOperation:self.getOperation];
             self.getOperation = nil;
         }
+        // parserOperation 在 startParserOperationWithData 方法中被初始化为GalleryParserOperation的一个对象,然后加入到 NetworkMangeer 的CPU操作队列(queueForCPU)
         if (self.parserOperation) {
             [[NetworkManager sharedManager] cancelOperation:self.parserOperation];
             self.parserOperation = nil;
         }
+        
         self.lastSyncError = [NSError errorWithDomain:NSCocoaErrorDomain code:NSUserCancelledError userInfo:nil];
         self.syncState = kPhotoGallerySyncStateStopped;  //恢复状态值
-        [[QLog log] logWithFormat:@"gallery %zu sync stopped", (size_t) self.sequenceNumber];
+        
+        [[QLog log] logWithFormat:@"%s gallery %zu sync stopped",__PRETTY_FUNCTION__, (size_t) self.sequenceNumber];
     }
 
 }

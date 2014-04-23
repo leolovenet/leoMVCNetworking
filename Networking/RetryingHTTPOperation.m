@@ -111,7 +111,7 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
 
 @synthesize request = _request;
 @synthesize retryStateClient       = retryStateClient;
-@synthesize hasHadRetryableFailure = _hasHadRetryableFailure;
+@synthesize hasHadRetryableFailure = _hasHadRetryableFailure;  //是否已经进行过失败重试了
 @synthesize acceptableContentTypes = _acceptableContentTypes;
 @synthesize responseFilePath       = _responseFilePath;
 @synthesize response               = _response;
@@ -119,8 +119,8 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
 @synthesize retryTimer             = _retryTimer;
 @synthesize retryCount             = _retryCount;
 @synthesize reachabilityOperation  = _reachabilityOperation;
-@synthesize notificationInstalled  = _notificationInstalled;
-@synthesize responseContent = _responseContent;  //URL 返回的内容
+@synthesize notificationInstalled  = _notificationInstalled;  //如果一个下载成功后,立即通知其他此 server 的下载重新尝试的notification callback 是否已经安装了
+@synthesize responseContent = _responseContent;               //URL 返回的内容
 
 
 - (RetryingHTTPOperationState)retryState
@@ -171,7 +171,7 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
 
 /*!
  *  Sets the hasHadRetryableFailure on the main thread.
- *  主线程上执行
+ *  这个 property 总是在 main 线程上改变. 这使 main 线程代码很容易展示 'retrying' 的用户界面.
  */
 - (void)setHasHadRetryableFailureOnMainThread
 {
@@ -194,10 +194,11 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
 {
     BOOL    shouldRetry;
     
+    //如果错误是我们标记的错误的话(包括,1.返回内容太长 2. 返回内如输出到文件错误 3. 返回内容 content type 不对 ),就需要判断了.
     if ( [[error domain] isEqual:kQHTTPOperationErrorDomain] ) {
-        // We can easily understand the consequence of coming directly from QHTTPOperation.
+        // We can easily understand the consequence(result) of coming directly from QHTTPOperation.
         
-        if ( [error code] > 0 ) {
+        if ( [error code] > 0 ) { //正整数是 server 返回的 HTML status codes
             // The request made it to the server, which failed it.  We consider that to be fatal.
             // It might make sense to handle error 503 "Service Unavailable" as a
             // special case here but, realistically(现实中), how common is that?
@@ -207,9 +208,9 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
                 default:
                     assert(NO);     // what is this error?
                     // fall through
-                case kQHTTPOperationErrorResponseTooLarge:
-                case kQHTTPOperationErrorOnOutputStream:
-                case kQHTTPOperationErrorBadContentType: {
+                case kQHTTPOperationErrorResponseTooLarge:   //1.返回内容太长
+                case kQHTTPOperationErrorOnOutputStream:     //2.返回内如输出到文件错误
+                case kQHTTPOperationErrorBadContentType: {   //3.返回内容 content type 不对
                     shouldRetry = NO;   // all of these conditions are unlikely to fail
                 } break;
             }
@@ -336,13 +337,13 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
 {
     assert([self isActualRunLoopThread]);
     assert( (self.retryState == kRetryingHTTPOperationStateGetting) || (self.retryState == kRetryingHTTPOperationStateRetrying) );
-    assert(operation == self.networkOperation);
+    assert(operation == self.networkOperation);//这是同一个对象才对
     
     self.networkOperation = nil;  //请求已经完成(或成功,或失败),并不需要在留着QHTTPOperation的实例
 
     if (operation.error == nil) {  // The request was successful; let's complete the operation.
         
-        [[QLog log] logOption:kLogOptionNetworkDetails withFormat:@"http %zu request success", (size_t) self->_sequenceNumber];
+        [[QLog log] logOption:kLogOptionNetworkDetails withFormat:@" %s http %zu request success",__PRETTY_FUNCTION__, (size_t) self->_sequenceNumber];
     
         self.response = operation.lastResponse;        //NSHTTPURLResponse
         self.responseContent = operation.responseBody; //NSData
@@ -350,9 +351,8 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
         ////这将导致调用,本类的 - (void)operationWillFinish
         [self finishWithError:nil];     // this changes state to kRetryingHTTPOperationStateFinished
 
-    } else {
-        
-        // Something went wrong.  Deal with the error.
+    } else {  // Something went wrong.  Deal with the error.
+                
         [[QLog log] logOption:kLogOptionNetworkDetails
                    withFormat:@"%s http %zu request error %@", __PRETTY_FUNCTION__, (size_t) self->_sequenceNumber, operation.error];
     
@@ -374,7 +374,6 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
             // This notification is broadcast if any download succeeds.  If it fires, we 
             // trigger a very quick retry because, if one transfer succeeds, it's likely that 
             // other transfers will succeed as well.
-
             if ( ! self.notificationInstalled ) {
                 [[NSNotificationCenter defaultCenter] addObserver:self
                                                          selector:@selector(transferDidSucceed:)
@@ -496,7 +495,11 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
 }
 
 
+
+#pragma mark - ReachabilityReachable operation
 /*!
+ *  本方法,是在第一次尝试 GET HTTP 请求失败后,回调函数 - (void)networkOperationDone:(QHTTPOperation *)operation 上初始化调用的.
+ *
  *  根据传入的参数,开启一个 reachability operation 等到请求的 host 是否变为可用或者不可用
  *  Starts a reachability operation waiting for the host associated with this request
  *  to become unreachable or reachabel (depending on the "reachable" parameter).
@@ -513,8 +516,8 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
     // In the reachable case the default mask and value is fine.
     // In the unreachable case we have to customise them.
     if ( ! reachable ) {
-        self.reachabilityOperation.flagsTargetMask  = kSCNetworkReachabilityFlagsReachable;
-        self.reachabilityOperation.flagsTargetValue = 0;
+        self.reachabilityOperation.flagsTargetMask  = kSCNetworkReachabilityFlagsReachable;//当可到达状态改变时,和下面的结果做对比
+        self.reachabilityOperation.flagsTargetValue = 0; //期望变为的结果,不可达
     }
 
     [self.reachabilityOperation setQueuePriority:[self queuePriority]];
@@ -529,7 +532,7 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
 
 // Called when the reachability operation finishes.  If we were looking for the
 // host to become unreachable, we respond by scheduling a new operation waiting
-// for the host to become reachable.  OTOH, if we've found that the host has
+// for the host to become reachable.  OTOH(On the Other Hand), if we've found that the host has
 // become reachable (and this must be a transition because we only schedule
 // such an operation if the host is current unreachable), we force a fast retry.
 - (void)reachabilityOperationDone:(QReachabilityOperation *)operation
@@ -537,24 +540,23 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
     assert([self isActualRunLoopThread]);
     assert(self.retryState >= kRetryingHTTPOperationStateWaitingToRetry);
     assert(operation == self.reachabilityOperation);
-    self.reachabilityOperation = nil;
+    self.reachabilityOperation = nil; //删除已经完成的 operation
     
     assert(operation.error == nil);     // ReachabilityOperation can never actually fail
 
-    if ( ! (operation.flags & kSCNetworkReachabilityFlagsReachable) ) {
+    if ( ! (operation.flags & kSCNetworkReachabilityFlagsReachable) ) { // 如果网络不可到达
     
         // We've know that the host is not unreachable.  Schedule a reachability operation to 
         // wait for it to become reachable.
-    
         [[QLog log] logOption:kLogOptionNetworkDetails withFormat:@"http %zu unreachable done (0x%zx)", (size_t) self->_sequenceNumber, (size_t) operation.flags];
 
         [self startReachabilityReachable:YES];
-    } else {
+        
+    } else { // 如果网络可到达
     
         // Reachability has flipped from being unreachable to being reachable.  We respond by 
         // radically shortening the retry delay (although not too short, we want to give the 
         // system time to settle after the reachability change).
-        
         [[QLog log] logOption:kLogOptionNetworkDetails withFormat:@"http %zu reachable done (0x%zx)", (size_t) self->_sequenceNumber, (size_t) operation.flags];
 
         if (self.retryState == kRetryingHTTPOperationStateWaitingToRetry) {

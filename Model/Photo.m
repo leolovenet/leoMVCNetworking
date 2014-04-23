@@ -26,10 +26,10 @@ const CGFloat kThumbnailSize = 60.0f;
 
 // read/write versions of public properties
 
-// IMPORTANT: The default implementation of a managed object property setter does not 
-// copy the incoming value.  We could fix this by writing our own setters, but that's a 
-// pain.  Instead, we take care to only assign values that are immutable, or to copy the 
-// values ourself.  We can do this because the properties are readonly to our external clients.
+// IMPORTANT: The default implementation of a managed object property setter does not copy the incoming value.
+// We could fix this by writing our own setters, but that's a pain.
+// Instead, we take care to only assign values that are immutable, or to copy the values ourself.
+// We can do this because the properties are readonly to our external clients.
 
 @property (nonatomic, retain, readwrite) NSString *         photoID;
 @property (nonatomic, retain, readwrite) NSString *         displayName;
@@ -37,13 +37,10 @@ const CGFloat kThumbnailSize = 60.0f;
 @property (nonatomic, retain, readwrite) NSString *         localPhotoPath;
 @property (nonatomic, retain, readwrite) NSString *         remotePhotoPath;
 @property (nonatomic, retain, readwrite) NSString *         remoteThumbnailPath;
-
 @property (nonatomic, retain, readwrite) Thumbnail *        thumbnail;
-
 @property (nonatomic, copy,   readwrite) NSError *          photoGetError;
 
 // private properties
-
 @property (nonatomic, retain, readonly ) PhotoGalleryContext *      photoGalleryContext;
 @property (nonatomic, retain, readwrite) RetryingHTTPOperation *    thumbnailGetOperation;
 @property (nonatomic, retain, readwrite) MakeThumbnailOperation *   thumbnailResizeOperation;
@@ -51,8 +48,8 @@ const CGFloat kThumbnailSize = 60.0f;
 @property (nonatomic, copy,   readwrite) NSString *                 photoGetFilePath;
 @property (nonatomic, assign, readwrite) BOOL                       thumbnailImageIsPlaceholder;
 
-// forward declarations
 
+// forward declarations
 - (void)updateThumbnail;
 - (void)updatePhoto;
 
@@ -61,17 +58,21 @@ const CGFloat kThumbnailSize = 60.0f;
 
 @end
 
+
+
 @implementation Photo 
 
+// 此方法在 PhotoGallery.m 中的 commitParserResults 方法中被调用.
+// 由新下载的 xml 文件中得到的 photo 信息,构建一个 photo 对象,并把它存入到 core data 中.
+// properties 的构成,查看PhotoGallery.m 中的 commitParserResults 方法中的定义.
 + (Photo *)insertNewPhotoWithProperties:(NSDictionary *)properties inManagedObjectContext:(NSManagedObjectContext *)managedObjectContext
-    // See comment in header.
 {
     Photo *     result;
     
     assert(properties != nil);
     assert( [[properties objectForKey:@"photoID"] isKindOfClass:[NSString class]] );
     assert( [[properties objectForKey:@"displayName"] isKindOfClass:[NSString class]] );
-    assert( [[properties objectForKey:@"date"] isKindOfClass:[NSDate class]] );
+    assert( [[properties objectForKey:@"date"] isKindOfClass:[NSDate class]] );//保存 photo 的时间信息的对象
     assert( [[properties objectForKey:@"remotePhotoPath"] isKindOfClass:[NSString class]] );
     assert( [[properties objectForKey:@"remoteThumbnailPath"] isKindOfClass:[NSString class]] );
     assert(managedObjectContext != nil);
@@ -82,9 +83,10 @@ const CGFloat kThumbnailSize = 60.0f;
         
         result.photoID             = [[[properties objectForKey:@"photoID"] copy] autorelease];
         assert(result.photoID != nil);
-        #if MVCNETWORKING_KEEP_PHOTO_ID_BACKUP
-            result->_photoIDBackup = [result.photoID copy];
-        #endif
+        
+#if MVCNETWORKING_KEEP_PHOTO_ID_BACKUP
+        result->_photoIDBackup = [result.photoID copy];
+#endif
         result.displayName         = [[[properties objectForKey:@"displayName"] copy] autorelease];
         result.date                = [[[properties objectForKey:@"date"] copy] autorelease];
         result.remotePhotoPath     = [[[properties objectForKey:@"remotePhotoPath"] copy] autorelease];
@@ -93,10 +95,10 @@ const CGFloat kThumbnailSize = 60.0f;
     return result;
 }
 
-#if MVCNETWORKING_KEEP_PHOTO_ID_BACKUP
 
+#if MVCNETWORKING_KEEP_PHOTO_ID_BACKUP
+// In the debug build we maintain _photoIDBackup to assist with debugging.
 - (id)initWithEntity:(NSEntityDescription *)entity insertIntoManagedObjectContext:(NSManagedObjectContext *)context
-    // In the debug build we maintain _photoIDBackup to assist with debugging.
 {
     self = [super initWithEntity:entity insertIntoManagedObjectContext:context];
     if (self != nil) {
@@ -104,14 +106,15 @@ const CGFloat kThumbnailSize = 60.0f;
     }
     return self;
 }
-
 #endif
 
 - (void)dealloc
 {
-    #if MVCNETWORKING_KEEP_PHOTO_ID_BACKUP
-        [self->_photoIDBackup release];
-    #endif
+    
+#if MVCNETWORKING_KEEP_PHOTO_ID_BACKUP
+    [self->_photoIDBackup release];
+#endif
+ 
     [self->_thumbnailImage release];
     assert(self->_thumbnailGetOperation == nil);            // As far as I can tell there are only two ways for these objects to get deallocated, 
     assert(self->_thumbnailResizeOperation == nil);         // namely, the object being deleted and the entire managed object context going away 
@@ -121,13 +124,10 @@ const CGFloat kThumbnailSize = 60.0f;
     [super dealloc];
 }
 
+// 此方法在 PhotoGallery.m 中的 commitParserResults 方法中被调用.
+// 本方法的作用为,将此 Photo 对象的属性更新为最新的从网络下载的 xml 中定义的值
 - (void)updateWithProperties:(NSDictionary *)properties
-    // See comment in header.
 {
-    #pragma unused(properties)
-    BOOL    thumbnailNeedsUpdate;
-    BOOL    photoNeedsUpdate;
-    
     assert( [self.photoID isEqual:[properties objectForKey:@"photoID"]] );
     assert( [[properties objectForKey:@"displayName"] isKindOfClass:[NSString class]] );
     assert( [[properties objectForKey:@"date"] isKindOfClass:[NSDate class]] );
@@ -138,6 +138,8 @@ const CGFloat kThumbnailSize = 60.0f;
         self.displayName = [[[properties objectForKey:@"displayName"] copy] autorelease];
     }
     
+    BOOL    thumbnailNeedsUpdate;
+    BOOL    photoNeedsUpdate;
     thumbnailNeedsUpdate = NO;
     photoNeedsUpdate     = NO;
     
@@ -157,8 +159,7 @@ const CGFloat kThumbnailSize = 60.0f;
         thumbnailNeedsUpdate = YES;
     }
 
-    // Do the updates.
-    
+    // Do the updates.    
     if (thumbnailNeedsUpdate) {
         [self updateThumbnail];
     }
@@ -167,13 +168,13 @@ const CGFloat kThumbnailSize = 60.0f;
     }
 }
 
+
 @dynamic photoID;
 @dynamic displayName;
 @dynamic date;
 @dynamic localPhotoPath;
 @dynamic remotePhotoPath;
 @dynamic remoteThumbnailPath;
-
 @dynamic thumbnail;
 
 - (PhotoGalleryContext *)photoGalleryContext
@@ -271,7 +272,7 @@ const CGFloat kThumbnailSize = 60.0f;
     [super willTurnIntoFault];
 }
 
-#pragma mark * Thumbnails
+#pragma mark - Thumbnails
 
 @synthesize thumbnailGetOperation       = _thumbnailGetOperation;
 @synthesize thumbnailResizeOperation    = _thumbnailResizeOperation;
@@ -517,14 +518,14 @@ const CGFloat kThumbnailSize = 60.0f;
     }
 }
 
-#pragma mark * Photos
+#pragma mark - Photos
 
 @synthesize photoGetOperation = _photoGetOperation;
 @synthesize photoGetFilePath  = _photoGetFilePath;
 @synthesize photoGetError     = _photoGetError;
 
+// Starts the HTTP operation to GET the photo itself.
 - (void)startPhotoGet
-    // Starts the HTTP operation to GET the photo itself.
 {
     NSURLRequest *      request;
 
@@ -541,13 +542,11 @@ const CGFloat kThumbnailSize = 60.0f;
     request = [self.photoGalleryContext requestToGetGalleryRelativeString:self.remotePhotoPath];
     //示例:  request = { URL: http://Leo-MacBook-Pro.local:8888/TestGallery/images/IMG_0125.JPG }
     if (request == nil) {
-        [[QLog log] logWithFormat:@"photo %@ photo get bad path '%@'", self.photoID, self.remotePhotoPath];
+        [[QLog log] logWithFormat:@"%s photo %@ photo get bad path '%@'",__PRETTY_FUNCTION__, self.photoID, self.remotePhotoPath];
         self.photoGetError = [NSError errorWithDomain:kQHTTPOperationErrorDomain code:400 userInfo:nil];
     } else {
 
-        // We start by downloading the photo to a temporary file.  Create an output stream 
-        // for that file.
-        
+        // We start by downloading the photo to a temporary file.  Create an output stream for that file.
         self.photoGetFilePath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"PhotoTemp-%.9f", [NSDate timeIntervalSinceReferenceDate]]];
         //example :  self.photoGetFilePath = /private/var/mobile/Applications/8181B390-29AC-4311-B18B-E0992F70D8DC/tmp/PhotoTemp-418620304.233712971
         
@@ -562,21 +561,21 @@ const CGFloat kThumbnailSize = 60.0f;
         self.photoGetOperation.responseFilePath = self.photoGetFilePath; //设置 下载内容到文件 的路径, 在 RetryingHTTPOperation 的 startRequest 方法里会检测这个值.
         self.photoGetOperation.acceptableContentTypes = [NSSet setWithObjects:@"image/jpeg", @"image/png", nil];
 
-        [[QLog log] logWithFormat:@"photo %@ photo get start '%@'", self.photoID, self.remotePhotoPath];
+        [[QLog log] logWithFormat:@"%s photo %@ photo get start '%@'",__PRETTY_FUNCTION__, self.photoID, self.remotePhotoPath];
         
         [[NetworkManager sharedManager] addNetworkManagementOperation:self.photoGetOperation finishedTarget:self action:@selector(photoGetDone:)];
     }
 }
 
+// Called when the HTTP operation to GET the photo completes.
+// If all is well, we commit the photo to the database.
 - (void)photoGetDone:(RetryingHTTPOperation *)operation
-    // Called when the HTTP operation to GET the photo completes.  
-    // If all is well, we commit the photo to the database.
 {
     assert([NSThread isMainThread]);
     assert([operation isKindOfClass:[RetryingHTTPOperation class]]);
     assert(operation == self.photoGetOperation);
 
-    [[QLog log] logWithFormat:@"photo %@ photo get done", self.photoID];
+    [[QLog log] logWithFormat:@"%s photo %@ photo get done",__PRETTY_FUNCTION__, self.photoID];
     
     if (operation.error != nil) {
         [[QLog log] logWithFormat:@"photo %@ photo get error %@", self.photoID, operation.error];
@@ -609,6 +608,8 @@ const CGFloat kThumbnailSize = 60.0f;
         // in day-to-day operations (specifically, in the case where we update a photo while actually 
         // displaying that photo).
         
+        // 这里在移动下载下来的缓存文件到存放图片的目录时,如果这个图片正在使用的话(比如正在查看),可能会有冲突,导致移动不成功.
+        // 所以这里设置了一个循环,去检查有没有移动成功,如果没有移动成功就尝试下一次,知道移动成功.如果连续100次移动不成功,就放弃了.
         fileCounter = 0;
         do {
             fileName = [NSString stringWithFormat:@"Photo-%@-%zu.%@", self.photoID, (size_t) fileCounter, extension];
@@ -633,17 +634,17 @@ const CGFloat kThumbnailSize = 60.0f;
             
             oldLocalPhotoPath = [[self.localPhotoPath copy] autorelease];
             
-            [[QLog log] logWithFormat:@"photo %@ photo get commit '%@'", self.photoID, fileName];
+            [[QLog log] logWithFormat:@"%s photo %@ photo get commit '%@'",__PRETTY_FUNCTION__, self.photoID, fileName];
             self.localPhotoPath = fileName;
             assert(self.photoGetError == nil);
             
             if (oldLocalPhotoPath != nil) {
-                [[QLog log] logWithFormat:@"photo %@ photo cleanup '%@'", self.photoID, oldLocalPhotoPath];
+                [[QLog log] logWithFormat:@"%s photo %@ photo cleanup '%@'",__PRETTY_FUNCTION__, self.photoID, oldLocalPhotoPath];
                 (void) [[NSFileManager defaultManager] removeItemAtPath:[self.photoGalleryContext.photosDirectoryPath stringByAppendingPathComponent:oldLocalPhotoPath] error:NULL];
             }
         } else {
             assert(error != nil);
-            [[QLog log] logWithFormat:@"photo %@ photo get commit failed %@", self.photoID, error];
+            [[QLog log] logWithFormat:@"%s photo %@ photo get commit failed %@",__PRETTY_FUNCTION__, self.photoID, error];
             self.photoGetError = error;
         }
     }
@@ -656,7 +657,7 @@ const CGFloat kThumbnailSize = 60.0f;
         self.photoGetFilePath = nil;
     }
 }
-
+//Foundation 框架提供的表示属性依赖的机制
 + (NSSet *)keyPathsForValuesAffectingPhotoImage
 {
     return [NSSet setWithObject:@"localPhotoPath"];
@@ -681,7 +682,7 @@ const CGFloat kThumbnailSize = 60.0f;
     }
     return result;
 }
-
+//Foundation 框架提供的表示属性依赖的机制
 + (NSSet *)keyPathsForValuesAffectingPhotoGetting
 {
     return [NSSet setWithObject:@"photoGetOperation"];
@@ -709,10 +710,10 @@ const CGFloat kThumbnailSize = 60.0f;
     self->_photoNeededAssertions -= 1;
 }
 
+// Updates the photo is response to a change in the photo's XML entity.
 - (void)updatePhoto
-    // Updates the photo is response to a change in the photo's XML entity.
 {
-    [[QLog log] logWithFormat:@"photo %@ update photo", self.photoID];
+    [[QLog log] logWithFormat:@"%s photo %@ update photo",__PRETTY_FUNCTION__, self.photoID];
 
     // We only fetch the photo is someone is actively looking at it.  Otherwise 
     // we just nix our record of the photo and fault it in as per usual the next 
