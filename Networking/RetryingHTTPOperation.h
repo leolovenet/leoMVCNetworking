@@ -72,8 +72,8 @@ typedef NS_ENUM(NSInteger, RetryingHTTPOperationState) {
     NSURLRequest *              _request;
     NSSet *                     _acceptableContentTypes;
     NSString *                  _responseFilePath;
-    NSHTTPURLResponse *         _response;
-    NSData *                    _responseContent;
+    NSHTTPURLResponse *         _response;        //因为URL请求可能有重定向的情况,所以此属性保存最近一次的服务器HTTP回应头信息,从 QHTTPOperation的lastResponse获得
+    NSData *                    _responseContent; //和上面对应的,请求回应得到的数据.从 QHTTPOperation的responseBody获得
     RetryingHTTPOperationState  _retryState;
     RetryingHTTPOperationState  _retryStateClient;
     QHTTPOperation *            _networkOperation;
@@ -103,9 +103,11 @@ typedef NS_ENUM(NSInteger, RetryingHTTPOperationState) {
 @property (retain, readwrite) NSString *                    responseFilePath;       // defaults to nil, which puts response into responseContent
 
 // Things that change as part of the progress of the operation.
-// 这些是被作为  operation 进程的一部,并并且随状态值的变化而变化. 所以是只读.
+// 这些是被作为  operation 进程的一部,并且随状态值的变化而变化. 所以是只读.
 @property (assign, readonly ) RetryingHTTPOperationState    retryState;             // observable, always changes on actualRunLoopthread
+// retryStateClient 属性被 Model 层 PhotoGallery 在 main thread 上访问这个属性,用于判断在 UI 的状态条上表明什么文字. 所以这个属性值的更改也必须在主线程上面.
 @property (assign, readonly ) RetryingHTTPOperationState    retryStateClient;       // observable, always changes on /main/ thread
+// hasHadRetryableFailure 属性被 Model 层 Photo 在 main thread 上访问,用于判断 thumbnail 的 placehoder 是否需要更新placehoder,表示图片获取在重新尝试. 所以这个属性值的更改也必须在主线程上面.
 @property (assign, readonly ) BOOL                          hasHadRetryableFailure; // observable, always changes on /main/ thread
 @property (assign, readonly ) NSUInteger                    retryCount;             // observable, always changes on actualRunLoopthread
 

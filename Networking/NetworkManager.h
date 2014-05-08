@@ -24,8 +24,9 @@
 // Can be called from any thread.
 - (NSMutableURLRequest *)requestToGetURL:(NSURL *)url;
 
-// networkInUse is YES if any network transfer operations are in progress; you can only
-// call the getter from the main thread.
+// networkInUse is YES if any network transfer operations are in progress;
+// you can only call the getter from the main thread.
+// 在applicationDidFinishLaunch中添加监控,即在 main thread上监控,根据此属性,决定application's networkActivityIndicatorVisible的值,用于判断在系统状态条上是否现实网络使用的 loading 图标.
 @property (nonatomic, assign, readonly ) BOOL  networkInUse;  // observable, always changes on main thread
 
 // Operation dispatch
@@ -36,20 +37,20 @@
 // o There are separate network management, network transfer and CPU queues, so that network 
 //   operations don't hold up CPU operations, and vice versa.
 //
-// o 网络管理队列的"宽度"(即, NSOperationQueue的maxConcurrentOperationCount 的值) 是不受限制的.
+// o 网络管理队列的"宽度"(即, NSOperationQueue 的 maxConcurrentOperationCount 的值) 是不受限制的.
 //   这样网络管理操作总是在运行.
 //   这样做没有关系,因为网络管理队列是所有 RunLoop 的基础.而消耗的资源很少.
 // o The width of the network management queue (that is, the maxConcurrentOperationCount value) 
 //   is unbounded, so that network management operations always proceed.  This is fine because 
 //   network management operations are all run loop based and consume very few real resources.
 //
-// o 网络传输队列的"宽度"(即, NSOperationQueue的maxConcurrentOperationCount 的值) 是被设定为固定的值.
+// o 网络传输队列的"宽度"(即, NSOperationQueue 的 maxConcurrentOperationCount 的值) 是被设定为固定的值.
 //   这样控制着我们能够同时运行 network operation 的总数量.
 // o The width of the network transfer queue is set to some fixed value, which controls the total 
 //   number of network operations that we can be running simultaneously.
 //
-// o CPU 操作队列的"宽度"(即, NSOperationQueue的maxConcurrentOperationCount 的值) ,没有被设置,即,这意味着
-//   我们对于没有可以使用的 CPU 核开启一个 CPU operation.这防止我们设置过多的 CPU operation,也获得不了并行操作的好处.
+// o CPU 操作队列的"宽度"(即, NSOperationQueue 的 maxConcurrentOperationCount 的值) ,没有被设置,即,这意味着
+//   我们对于没有可以使用的 CPU 核开启一个 CPU operation. 这防止我们设置过多的 CPU operation,也获得不了并行操作的好处.
 // o The width of the CPU operation queue is left at the default value, which typically means
 //   we start one CPU operation per available core (which on iOS devices means one).  This 
 //   prevents us from starting lots of CPU operations that just thrash the scheduler without 

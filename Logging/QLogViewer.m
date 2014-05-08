@@ -63,7 +63,7 @@
     // Configure the table view.
     
     self.tableView.allowsSelection = NO;
-    self.tableView.rowHeight = 60.0f;
+    self.tableView.rowHeight = 100.0f;
 }
 
 - (void)viewWillDisappear:(BOOL)animated
@@ -73,10 +73,10 @@
 
 #pragma mark - Updating
 
+// Returns an array containing index path objects for each item in the
+// index set, where the section of the index path is as specified by the
+// parameter and the row of the index path is the index from the index set.
 - (NSArray *)indexPathsForSection:(NSUInteger)section rowIndexSet:(NSIndexSet *)indexSet
-    // Returns an array containing index path objects for each item in the 
-    // index set, where the section of the index path is as specified by the 
-    // parameter and the row of the index path is the index from the index set.
 {
     NSMutableArray *    indexPaths;
     NSUInteger          currentIndex;
@@ -166,7 +166,7 @@
         assert(cell != nil);
         
         cell.textLabel.font = [UIFont systemFontOfSize:12.0f];
-        cell.textLabel.numberOfLines = 3;
+        cell.textLabel.numberOfLines = 10;
         cell.textLabel.lineBreakMode = UILineBreakModeWordWrap;
         
         // In the long term I'd like to have another view that lets you see a complete 
@@ -175,6 +175,7 @@
         // cell.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
     }
     cell.textLabel.text = [[QLog log].logEntries objectAtIndex:indexPath.row];
+
 
     return cell;
 }

@@ -81,9 +81,12 @@ typedef NS_ENUM(NSUInteger, PhotoGallerySyncState){
 // These properties are exported for the benefit of the PhotoGalleryViewController class, which 
 // uses them to set up its fetched results controller.
 
-@property (nonatomic, retain, readonly ) NSManagedObjectContext *   managedObjectContext;       // observable
-@property (nonatomic, retain, readonly ) NSEntityDescription *      photoEntity;//为执行 executeFetchRequest 需要的NSFetchRequest 对象,创建一个NSEntityDescription对象
-    // Returns the entity description for the "Photo" entity in our database.
+@property (nonatomic, retain, readonly ) NSManagedObjectContext *   managedObjectContext;       // observable, 返回的是私有属性 self.galleryContext
+
+//为执行executeFetchRequest需要的NSFetchRequest 对象,创建一个NSEntityDescription对象
+// Returns the entity description for the "Photo" entity in our database.
+@property (nonatomic, retain, readonly ) NSEntityDescription *      photoEntity;
+
 
 #pragma mark * Syncing
 

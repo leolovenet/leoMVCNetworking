@@ -16,9 +16,9 @@
 @property (nonatomic, retain, readwrite) IBOutlet QImageScrollView *        scrollView;
 @property (nonatomic, retain, readwrite) IBOutlet UILabel *                 loadingLabel;
 
-- (id)initWithPhoto:(Photo *)photo photoGallery:(PhotoGallery *)photoGallery;
-
 @property (nonatomic, retain, readonly) Photo *         photo;
 @property (nonatomic, retain, readonly) PhotoGallery *  photoGallery;
+
+- (id)initWithPhoto:(Photo *)photo photoGallery:(PhotoGallery *)photoGallery;
 
 @end

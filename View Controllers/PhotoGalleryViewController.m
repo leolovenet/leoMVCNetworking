@@ -39,7 +39,7 @@
 @synthesize flexBarButtonItem    = _flexBarButtonItem;
 @synthesize statusBarButtonItem  = _statusBarButtonItem;
 
-@synthesize photoGallery         = _photoGallery;
+@synthesize photoGallery         = _photoGallery;   // PhotoGallery 对象,初始化本类对象时,通过initWithPhotoGallery: 方法赋值.
 @synthesize fetcher              = _fetcher;
 @synthesize dateFormatter        = _dateFormatter;
 
@@ -83,7 +83,13 @@
         // get called before /and/ after the change, allowing us to shut down our UI before 
         // the change and bring it up again afterwards.
         // 因为指定了 NSKeyValueObservingOptionInitial 选项,导致observeValueForKeyPath:ofObject:change:context: 立即被调用
-        [self addObserver:self forKeyPath:@"photoGallery" options:(NSKeyValueObservingOptionInitial | NSKeyValueObservingOptionPrior) context:&self->_photoGallery];
+        
+        // 这里对self.photoGallery 添加的监控至关重要,因为 photoGalery 封装了 CoreData ,从网络获取的数据全部保存在了 CoreData 里.
+        // 那这个监控的意思就是,只要网络操作获取到新的数据,就通知我,我将调用 startFetcher,重新配置self.fetcher,重新从 core data 中获取数据,重新加载 table,更新 UI.
+        [self addObserver:self
+               forKeyPath:@"photoGallery"
+                  options:(NSKeyValueObservingOptionInitial | NSKeyValueObservingOptionPrior)
+                  context:&self->_photoGallery];
     }
     return self;
 }
@@ -127,8 +133,8 @@
 
 
 // Starts the fetch results controller that provides the data for our table.
-// 在本类的observeValueForKeyPath:ofObject:change:context: 方法中被调用
-// 从 core data 中获取数据,并设置NSFetchedResultsController,并设置其delegate为self
+// 每当 core data 中存储的 Photo 数据(即,self.photoGallery)发生变化时(例如,有新的数据添加,或者现有数据有变更时),本类得到通知,然后调用本方法.
+// 重新配置self.fetcher,重新从 core data 中获取数据,重新加载 table.
 - (void)startFetcher
 {
     BOOL                            success;
@@ -139,7 +145,7 @@
     assert(self.photoGallery != nil);
     assert(self.photoGallery.managedObjectContext != nil);
     
-    sortDescriptor = [[[NSSortDescriptor alloc] initWithKey:@"date" ascending:YES] autorelease];
+    sortDescriptor = [[[NSSortDescriptor alloc] initWithKey:@"date" ascending:YES] autorelease]; //以时间排序
     assert(sortDescriptor != nil);
     
     fetchRequest = [[[NSFetchRequest alloc] init] autorelease];
@@ -150,7 +156,6 @@
     //[fetchRequest setSortDescriptors:[NSArray arrayWithObject:sortDescriptor]];
     [fetchRequest setSortDescriptors:@[sortDescriptor]];
     
-    
     assert(self.fetcher == nil);
     self.fetcher = [[[NSFetchedResultsController alloc] initWithFetchRequest:fetchRequest
                                                         managedObjectContext:self.photoGallery.managedObjectContext
@@ -158,6 +163,7 @@
                                                                    cacheName:nil] autorelease];
     assert(self.fetcher != nil);
     
+    // 设置self.fetcher的delegate为self,在数据有变动时,会调用本类的controller:didChangeObject:atIndexPath:forChangeType:newIndexPath:
     self.fetcher.delegate = self;
     
     success = [self.fetcher performFetch:&error];
@@ -241,8 +247,8 @@
             }
 
             // And reload the table to account for any possible change.
-
             [self reloadTable];
+            
         }
     } else if (context == &self->_dateFormatter) {
         //当时区,或者时间格式发生了改变,tables上显示的时间字符串也要相应的改变.
@@ -254,7 +260,7 @@
         assert(object == self.photoGallery);
         
         self.dateFormatter = self.photoGallery.standardDateFormatter;
-        [self reloadTable];
+        [self reloadTable];  //重新加载 table, 这样新的时间样式格式就会显现到 UI
 
     } else if ( (context == NULL) && [keyPath isEqual:@"showViewer"] ) {  //Qlog view
     
@@ -363,6 +369,7 @@
         assert(sections != nil);
         assert(section >= 0);
         assert( (NSUInteger) section < [sections count] );
+        
         result = [[sections objectAtIndex:section] numberOfObjects];
     }
     return result;
@@ -380,9 +387,8 @@
     if ( [self hasNoPhotos] ) {
         
         // There are no photos to display; return a cell that simple says "No photos".
-        
         result = [self.tableView dequeueReusableCellWithIdentifier:@"cell"];
-        if (result == nil) {
+        if (result == nil) { // 如果 还没有以@"cell"为标识符的可用 cell,就创建一个.
             result = [[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"cell"] autorelease];
             assert(result != nil);
             
@@ -391,18 +397,22 @@
             result.textLabel.textAlignment = UITextAlignmentCenter;
         }
         result.selectionStyle = UITableViewCellSelectionStyleNone;
+        
     } else {
-        PhotoCell *     cell;
-        Photo *         photo;
-
+        
         // Return a cell that displays the appropriate photo.  Note that we just tell 
         // the cell what photo to display, and it takes care of displaying the right 
-        // stuff (via the miracle of KVO).
-
-        photo = [self.fetcher objectAtIndexPath:indexPath];
+        // stuff (via the miracle(surprising) of KVO).
+        
+        // Photo 对象是在 model 层 PhotoGallery.m 中的 commitParserResults 方法中创建的.这里提取出来
+        //NSLog(@"show photo whith indexPath: %@",indexPath);
+        
+        
+        // Photo 对象实际上是 NSManagedObject 对象, 从 core data 里提去来的.
+        Photo *  photo = [self.fetcher objectAtIndexPath:indexPath];
         assert([photo isKindOfClass:[Photo class]]);
         
-        cell = (PhotoCell *) [self.tableView dequeueReusableCellWithIdentifier:@"PhotoCell"];
+        PhotoCell *  cell = (PhotoCell *) [self.tableView dequeueReusableCellWithIdentifier:@"PhotoCell"];
         if (cell != nil) {
             assert([cell isKindOfClass:[PhotoCell class]]);
         } else {
@@ -413,7 +423,8 @@
             
             cell.accessoryType  = UITableViewCellAccessoryDisclosureIndicator;
         }
-        cell.photo = photo;
+        //对photo属性进行赋值,导致PhotoCell类得到通知,然后, 去下载 thumbnail 图标,并进行一系列的 thumbnail resize, 然后存储到 Core Data 等操作.
+        cell.photo = photo; //self.dateFormatter = self.photoGallery.standardDateFormatter;
         cell.dateFormatter = self.dateFormatter;
         
         result = cell;
@@ -432,17 +443,16 @@
     // assert(indexPath.section == 0);
     // assert(indexPath.row < ?);
 
-    if ( [self hasNoPhotos] ) {
+    if ( [self hasNoPhotos] ) { //如果没有照片的话,使 cell 不能被选中
         [self.tableView deselectRowAtIndexPath:indexPath animated:YES];
     } else {
-        Photo *                         photo;
-        PhotoDetailViewController *     vc;
-
+        
         // Push a photo detail view controller to display the bigger version of the photo.
-
+        Photo * photo;
         photo = [self.fetcher objectAtIndexPath:indexPath];
         assert([photo isKindOfClass:[Photo class]]);
         
+        PhotoDetailViewController *     vc;
         vc = [[[PhotoDetailViewController alloc] initWithPhoto:photo photoGallery:self.photoGallery] autorelease];
         assert(vc != nil);
         

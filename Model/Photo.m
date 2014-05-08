@@ -31,14 +31,14 @@ const CGFloat kThumbnailSize = 60.0f;
 // Instead, we take care to only assign values that are immutable, or to copy the values ourself.
 // We can do this because the properties are readonly to our external clients.
 
-@property (nonatomic, retain, readwrite) NSString *         photoID;
-@property (nonatomic, retain, readwrite) NSString *         displayName;
-@property (nonatomic, retain, readwrite) NSDate *           date;
-@property (nonatomic, retain, readwrite) NSString *         localPhotoPath;
-@property (nonatomic, retain, readwrite) NSString *         remotePhotoPath;
-@property (nonatomic, retain, readwrite) NSString *         remoteThumbnailPath;
-@property (nonatomic, retain, readwrite) Thumbnail *        thumbnail;
-@property (nonatomic, copy,   readwrite) NSError *          photoGetError;
+@property (nonatomic, retain, readwrite) NSString *         photoID;                //实例 13955766067916300168
+@property (nonatomic, retain, readwrite) NSString *         displayName;            //实例 "Thumbnail Not Found"
+@property (nonatomic, retain, readwrite) NSDate *           date;                   //实例 "2010-08-16 02:46:33 +0000"
+@property (nonatomic, retain, readwrite) NSString *         localPhotoPath;         //默认 nil,实例 "Photo-13955766067916300168-0.jpg"
+@property (nonatomic, retain, readwrite) NSString *         remotePhotoPath;        //实例 "images/IMG_0125.JPG"
+@property (nonatomic, retain, readwrite) NSString *         remoteThumbnailPath;    //实例 "thumbnails/IMG_0125xxx.jpg"
+@property (nonatomic, retain, readwrite) Thumbnail *        thumbnail;          //默认 nil,实例: "0x374030 <x-coredata://04EE60A0-46D4-4F5E-89C2-BE7860B66C98/Thumbnail/p4>"
+@property (nonatomic, copy,   readwrite) NSError *          photoGetError;          //
 
 // private properties
 @property (nonatomic, retain, readonly ) PhotoGalleryContext *      photoGalleryContext;
@@ -59,16 +59,37 @@ const CGFloat kThumbnailSize = 60.0f;
 @end
 
 
+/*
+    本类继承自 NSManagedObject, 可以被存入,或提取自 , core data.
+         // 本类实例在初次初始化时,没有从网络获取 thumbnail 的数据,在 PhotoCell 初次请求 thumbnailImage 属性时,
+         // 会先返回一个 PlaceHolder, 并启用一个异步网络请求去加载服务器的thnubnail
+         // 如果请求成功,会 resize 后,返回真正的 thunbnail
+         // 如果请求失败,返回一个请求失败的 placeholder.
+*/
 
-@implementation Photo 
+
+@implementation Photo
+
+@dynamic photoID;
+@dynamic displayName;
+@dynamic date;
+@dynamic localPhotoPath;
+@dynamic remotePhotoPath;
+@dynamic remoteThumbnailPath;
+@dynamic thumbnail;
+
+@synthesize thumbnailGetOperation       = _thumbnailGetOperation;
+@synthesize thumbnailResizeOperation    = _thumbnailResizeOperation;
+@synthesize thumbnailImageIsPlaceholder = _thumbnailImageIsPlaceholder;  //一个开关标识,代表现在展示 thumbnail 的图片是不是 placeholder
+@synthesize photoGetOperation           = _photoGetOperation;
+@synthesize photoGetFilePath            = _photoGetFilePath; // 代表下载的大图,暂时存储在临时目录下的路径.
+@synthesize photoGetError               = _photoGetError;
 
 // 此方法在 PhotoGallery.m 中的 commitParserResults 方法中被调用.
 // 由新下载的 xml 文件中得到的 photo 信息,构建一个 photo 对象,并把它存入到 core data 中.
 // properties 的构成,查看PhotoGallery.m 中的 commitParserResults 方法中的定义.
 + (Photo *)insertNewPhotoWithProperties:(NSDictionary *)properties inManagedObjectContext:(NSManagedObjectContext *)managedObjectContext
 {
-    Photo *     result;
-    
     assert(properties != nil);
     assert( [[properties objectForKey:@"photoID"] isKindOfClass:[NSString class]] );
     assert( [[properties objectForKey:@"displayName"] isKindOfClass:[NSString class]] );
@@ -77,11 +98,13 @@ const CGFloat kThumbnailSize = 60.0f;
     assert( [[properties objectForKey:@"remoteThumbnailPath"] isKindOfClass:[NSString class]] );
     assert(managedObjectContext != nil);
 
+    //执行插入数据到 core data
+    Photo *     result;
     result = (Photo *) [NSEntityDescription insertNewObjectForEntityForName:@"Photo" inManagedObjectContext:managedObjectContext];
     if (result != nil) {
         assert([result isKindOfClass:[Photo class]]);
         
-        result.photoID             = [[[properties objectForKey:@"photoID"] copy] autorelease];
+        result.photoID = [[[properties objectForKey:@"photoID"] copy] autorelease];
         assert(result.photoID != nil);
         
 #if MVCNETWORKING_KEEP_PHOTO_ID_BACKUP
@@ -169,45 +192,20 @@ const CGFloat kThumbnailSize = 60.0f;
 }
 
 
-@dynamic photoID;
-@dynamic displayName;
-@dynamic date;
-@dynamic localPhotoPath;
-@dynamic remotePhotoPath;
-@dynamic remoteThumbnailPath;
-@dynamic thumbnail;
-
+// managedObjectContext 为在注册本类实例时添加上的.即在本类 insertNewPhotoWithProperties:inManagedObjectContext: 中添加.
 - (PhotoGalleryContext *)photoGalleryContext
 {
     PhotoGalleryContext *   result;
-    
     result = (PhotoGalleryContext *) [self managedObjectContext];
     assert( [result isKindOfClass:[PhotoGalleryContext class]] );
     
     return result;
 }
 
-- (BOOL)stopThumbnail
-{
-    BOOL    didSomething;
-    
-    didSomething = NO;
-    if (self.thumbnailGetOperation != nil) {
-        [self.thumbnailGetOperation removeObserver:self forKeyPath:@"hasHadRetryableFailure"];
-        [[NetworkManager sharedManager] cancelOperation:self.thumbnailGetOperation];
-        self.thumbnailGetOperation = nil;
-        didSomething = YES;
-    }
-    if (self.thumbnailResizeOperation != nil) {
-        [[NetworkManager sharedManager] cancelOperation:self.thumbnailResizeOperation];
-        self.thumbnailResizeOperation = nil;
-        didSomething = YES;
-    }
-    return didSomething;
-}
 
+
+// Stops all async activity on the object.
 - (void)stop
-    // Stops all async activity on the object.
 {
     BOOL    didSomething;
     
@@ -248,7 +246,10 @@ const CGFloat kThumbnailSize = 60.0f;
     // Delete the photo file if it exists on disk.
     
     if (self.localPhotoPath != nil) {
-        success = [[NSFileManager defaultManager] removeItemAtPath:[self.photoGalleryContext.photosDirectoryPath stringByAppendingPathComponent:self.localPhotoPath] error:NULL];
+        success = [[NSFileManager defaultManager]
+                   removeItemAtPath:[self.photoGalleryContext.photosDirectoryPath stringByAppendingPathComponent:self.localPhotoPath]
+                   error:NULL];
+        
         assert(success);
     }
     
@@ -272,25 +273,20 @@ const CGFloat kThumbnailSize = 60.0f;
     [super willTurnIntoFault];
 }
 
+
 #pragma mark - Thumbnails
 
-@synthesize thumbnailGetOperation       = _thumbnailGetOperation;
-@synthesize thumbnailResizeOperation    = _thumbnailResizeOperation;
-@synthesize thumbnailImageIsPlaceholder = _thumbnailImageIsPlaceholder;
-
+// Starts the HTTP operation to GET the photo's thumbnail.
 - (void)startThumbnailGet
-    // Starts the HTTP operation to GET the photo's thumbnail.
 {
-    NSURLRequest *      request;
-    
     assert(self.remoteThumbnailPath != nil);
     assert(self.thumbnailGetOperation == nil);
     assert(self.thumbnailResizeOperation == nil);
-    
-    request = [self.photoGalleryContext requestToGetGalleryRelativeString:self.remoteThumbnailPath];
-    if (request == nil) {
-        [[QLog log] logWithFormat:@"photo %@ thumbnail get bad path '%@'", self.photoID, self.remoteThumbnailPath];
-        [self thumbnailCommitImage:nil isPlaceholder:YES];
+   
+    NSURLRequest * request = [self.photoGalleryContext requestToGetGalleryRelativeString:self.remoteThumbnailPath];
+    if (request == nil) {    
+        [[QLog log] logWithFormat:@"%s photo %@ thumbnail get bad path '%@'",__PRETTY_FUNCTION__, self.photoID, self.remoteThumbnailPath];
+        [self thumbnailCommitImage:nil isPlaceholder:YES];  //构造 NSURLRequest 对象失败,设置Placeholder图像.
     } else {
         self.thumbnailGetOperation = [[[RetryingHTTPOperation alloc] initWithRequest:request] autorelease];
         assert(self.thumbnailGetOperation != nil);
@@ -298,65 +294,102 @@ const CGFloat kThumbnailSize = 60.0f;
         [self.thumbnailGetOperation setQueuePriority:NSOperationQueuePriorityLow];
         self.thumbnailGetOperation.acceptableContentTypes = [NSSet setWithObjects:@"image/jpeg", @"image/png", nil];
 
-        [[QLog log] logWithFormat:@"photo %@ thumbnail get start '%@'", self.photoID, self.remoteThumbnailPath];
+        [[QLog log] logWithFormat:@"%s photo %@ thumbnail get start '%@'",__PRETTY_FUNCTION__, self.photoID, self.remoteThumbnailPath];
         
+        
+        //对thumbnailGetOperation 的 hasHadRetryableFailure 属性添加一个监控.在第一次获取失败后,启用一个新的placehoder图片(Placeholder-Deferred.png),说明在重新获取图片.
         [self.thumbnailGetOperation addObserver:self forKeyPath:@"hasHadRetryableFailure" options:0 context:&self->_thumbnailImage];
         
+        //添加到 Runloop,并当完成 opertaion 后调用回调函数
         [[NetworkManager sharedManager] addNetworkManagementOperation:self.thumbnailGetOperation finishedTarget:self action:@selector(thumbnailGetDone:)];
     }
 }
 
+// 停止get Thumbnail 或 resize Thumbnail 操作, 并清理相关属性变量.
+// 返回YES,表示进行了取消get或resize操作,返回NO,表示压根就不用进行取消操作
+- (BOOL)stopThumbnail
+{
+    BOOL    didSomething;
+    
+    didSomething = NO;
+    if (self.thumbnailGetOperation != nil) { //网络获取 thumbnail 操作可以被取消
+        
+        //在 startThumbnailGet 中添加了对 RetryingHTTPOperation 类的此属性监控,用于展示一个新的 thumbnail placeholder deferred 图片,提示用户,图片获取在重新尝试中.
+        [self.thumbnailGetOperation removeObserver:self forKeyPath:@"hasHadRetryableFailure"];
+        
+        [[NetworkManager sharedManager] cancelOperation:self.thumbnailGetOperation];
+        self.thumbnailGetOperation = nil;
+        didSomething = YES;
+    }
+    if (self.thumbnailResizeOperation != nil) {//更改 thumbnail 的尺寸的操作可以被取消
+        [[NetworkManager sharedManager] cancelOperation:self.thumbnailResizeOperation];
+        self.thumbnailResizeOperation = nil;
+        didSomething = YES;
+    }
+    return didSomething;
+}
+
+
+// 如果 RetryingHTTPOperation 获取失败后,第一次进行 retry 的话,会更改 hasHadRetryableFailure 的值,本类收到通知,调用本方法.
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context
 {
     if (context == &self->_thumbnailImage) {
-        assert(object == self.thumbnailGetOperation);
+        assert(object == self.thumbnailGetOperation); // 发送此消息的是RetryingHTTPOperation类的实例,thumbnailGetOperation 操作
         assert( [keyPath isEqual:@"hasHadRetryableFailure"] );
-        assert([NSThread isMainThread]);
+        assert([NSThread isMainThread]);    //因为涉及到 UI 的更新, 本方法是在 main thread 上调用
         
         // If we're currently showing a placeholder and the network operation 
-        // indicates that it's had one failure, change the placeholder to the deferred 
-        // placeholder.  The test for thumbnailImageIsPlaceholder is necessary in the 
+        // indicates that it's had one failure, change the placeholder to the deferred placeholder.
+        //
+        // The test for thumbnailImageIsPlaceholder is necessary in the
         // -updateThumbnail case because we don't want to replace a valid (but old) 
         // thumbnail with a placeholder.
         
+        // 本类实例在初次初始化时,没有从网络获取 thumbnail 的数据,在 PhotoCell 初次请求 thumbnailImage 属性时,
+        // 会先返回一个 PlaceHolder, 并启用一个异步网络请求去加载服务器的thnubnail
+        // 如果请求成功,会 resize 后,返回真正的 thunbnail
+        // 如果请求失败,返回一个请求失败的 placeholder.
         if (self.thumbnailImageIsPlaceholder && self.thumbnailGetOperation.hasHadRetryableFailure) {
             [self thumbnailCommitImage:[UIImage imageNamed:@"Placeholder-Deferred.png"] isPlaceholder:YES];
         }
+        
     } else if (NO) {   // Disabled because the super class does nothing useful with it.
         [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
     }
 }
 
+// Called when the HTTP operation to GET the photo's thumbnail completes.
+// If all is well, we start a resize operation to reduce it the appropriate size.
 - (void)thumbnailGetDone:(RetryingHTTPOperation *)operation
-    // Called when the HTTP operation to GET the photo's thumbnail completes.  
-    // If all is well, we start a resize operation to reduce it the appropriate 
-    // size.
 {
     assert([NSThread isMainThread]);
     assert([operation isKindOfClass:[RetryingHTTPOperation class]]);
     assert(operation == self.thumbnailGetOperation);
     assert([self.thumbnailGetOperation isFinished]);
 
-    assert(self.thumbnailResizeOperation == nil);
+    assert(self.thumbnailResizeOperation == nil);  //此时应该还没有设置 resize operation
 
-    [[QLog log] logWithFormat:@"photo %@ thumbnail get done", self.photoID];
+    [[QLog log] logWithFormat:@"%s photo %@ thumbnail get done. %@",__PRETTY_FUNCTION__, self.photoID , operation.request.URL];
     
     if (operation.error != nil) {
         [[QLog log] logWithFormat:@"photo %@ thumbnail get error %@", self.photoID, operation.error];
-        [self thumbnailCommitImage:nil isPlaceholder:YES];
-        (void) [self stopThumbnail];
-    } else {
+        [self thumbnailCommitImage:nil isPlaceholder:YES];  //从网络获取thumbnail失败的话,就启用 placeholder
+        (void) [self stopThumbnail];  //做清理工作
+        
+    } else { //从网络获 thumbnail 成功完成
+        
         [[QLog log] logOption:kLogOptionNetworkData withFormat:@"receive %@", operation.responseContent];
 
         // Got the data successfully.  Let's start the resize operation.
+        // 开始 resize 操作
         
         self.thumbnailResizeOperation = [[[MakeThumbnailOperation alloc] initWithImageData:operation.responseContent MIMEType:operation.responseMIMEType] autorelease];
         assert(self.thumbnailResizeOperation != nil);
 
-        self.thumbnailResizeOperation.thumbnailSize = kThumbnailSize;
+        self.thumbnailResizeOperation.thumbnailSize = kThumbnailSize; // MakeThumbnailOperation 类的thumbnailSize 默认为32.0f
         
-        // We want thumbnails resizes to soak up unused CPU time, but the main thread should 
-        // always run if it can.  The operation priority is a relative value (courtesy of the 
+        // We want thumbnails resizes to soak up(吸收) unused CPU time, but the main thread should
+        // always run if it can.  The operation priority is a relative value (courtesy of(由...提供) the
         // underlying Mach THREAD_PRECEDENCE_POLICY), that is, it sets the priority relative 
         // to other threads in the same process.  A value of 0.5 is the default, so we set a 
         // value significantly lower than that.
@@ -366,44 +399,53 @@ const CGFloat kThumbnailSize = 60.0f;
         }
         [self.thumbnailResizeOperation setQueuePriority:NSOperationQueuePriorityLow];
         
+        
+        // 向 main thread 上添加任务
         [[NetworkManager sharedManager] addCPUOperation:self.thumbnailResizeOperation finishedTarget:self action:@selector(thumbnailResizeDone:)];
     }
 }
 
+// Called when the operation to resize the thumbnail completes.
+// If all is well, we commit the thumbnail to our database.
 - (void)thumbnailResizeDone:(MakeThumbnailOperation *)operation
-    // Called when the operation to resize the thumbnail completes.  
-    // If all is well, we commit the thumbnail to our database.
 {
-    UIImage *   image;
-    
     assert([NSThread isMainThread]);
     assert([operation isKindOfClass:[MakeThumbnailOperation class]]);
     assert(operation == self.thumbnailResizeOperation);
     assert([self.thumbnailResizeOperation isFinished]);
 
-    [[QLog log] logWithFormat:@"photo %@ thumbnail resize done", self.photoID];
-    
+    [[QLog log] logWithFormat:@"%s photo %@ thumbnail resize done. %@", __PRETTY_FUNCTION__, self.photoID, self.thumbnailGetOperation.request.URL];
+ 
+    UIImage *   image;
     if (operation.thumbnail == NULL) {
         [[QLog log] logWithFormat:@"photo %@ thumbnail resize failed", self.photoID];
         image = nil;
-    } else {
+    } else { //  resize operation 顺利完成
+        // 返回处理好的图片
         image = [UIImage imageWithCGImage:operation.thumbnail];
         assert(image != nil);
     }
     
     [self thumbnailCommitImage:image isPlaceholder:NO];
-    [self stopThumbnail];
+    [self stopThumbnail]; //清理工作
 }
 
+// Commits the thumbnail image to the object itself and to the Core Data database.
+// 如果成功 resize thumbnail 后,将处理好的 UIImage 提交上来.此时, placeholder 开关应该为 NO
+// 如果 get thumbnial 或 resize thumbnail 的操作出现错误, 将 image 设置为 nil, 此时.placeholder 开关应该为 YES, 表示启用预先定义好的 Placeholder
+// 如果 placeholder 为 NO 的话, 会把 Image 存入到 CoreData.
+// 无论如何,本方法会更改 thumbnailImage 属性的值,导致监控本属性的 PhotoCell 类得到通知,更新 UI 上的照片.
 - (void)thumbnailCommitImage:(UIImage *)image isPlaceholder:(BOOL)isPlaceholder
-    // Commits the thumbnail image to the object itself and to the Core Data database.
 {
     // If we were given no image, that's a shortcut for the bad image placeholder.  In 
     // that case we ignore the incoming value of placeholder and force it to YES.
     
     if (image == nil) {
         isPlaceholder = YES;
-        image = [UIImage imageNamed:@"Placeholder-Bad.png"];
+        //On iOS 4 and later, if the file is in PNG format, it is not necessary to specify the .PNG filename extension.
+        //Prior to iOS 4, you must specify the filename extension.
+        //image = [UIImage imageNamed:@"Placeholder-Bad.png"];
+        image = [UIImage imageNamed:@"Placeholder-Bad"];
         assert(image != nil);
     }
     
@@ -411,101 +453,114 @@ const CGFloat kThumbnailSize = 60.0f;
     // we only log for real thumbnails.
     
     if ( ! isPlaceholder ) {
-        [[QLog log] logWithFormat:@"photo %@ thumbnail commit", self.photoID];
+        [[QLog log] logWithFormat:@"%s photo %@ thumbnail commit to UI.%@",__PRETTY_FUNCTION__, self.photoID, self.thumbnailGetOperation.request.URL];
     }
     
-    // If we got a non-placeholder image, commit its PNG representation into our thumbnail 
-    // database.  To avoid the scroll view stuttering, we only want to do this if the run loop 
-    // is running in the default mode.  Thus, we check the mode and either do it directly or 
-    // defer the work until the next time the default run loop mode runs.
+    // If we got a non-placeholder image, commit its PNG representation into our thumbnail database.
+    // To avoid the scroll view stuttering(结巴,口吃), we only want to do this if the run loop is running in the default mode.
+    // Thus, we check the mode and either do it directly or defer the work until the next time the default run loop mode runs.
     //
     // If we were running on iOS 4 or later we could get the PNG representation using 
     // ImageIO, but I want to maintain iOS 3 compatibility for the moment and on that 
     // system we have to use UIImagePNGRepresentation.
     
+    //将不是 placeholder 的数据存入 Core Data
     if ( ! isPlaceholder ) {
         if ( [[[NSRunLoop currentRunLoop] currentMode] isEqual:NSDefaultRunLoopMode] ) {
             [self thumbnailCommitImageData:image];
         } else {
-            [self performSelector:@selector(thumbnailCommitImageData:) withObject:image afterDelay:0.0 inModes:[NSArray arrayWithObject:NSDefaultRunLoopMode]];
+            [self performSelector:@selector(thumbnailCommitImageData:)
+                       withObject:image
+                       afterDelay:0.0
+                          inModes:[NSArray arrayWithObject:NSDefaultRunLoopMode]
+             ];
         }
     }
     
-    // Commit the change to our thumbnailImage property.
-    
+    // Commit the change to our thumbnailImage property.  PhotoCell中监控着此属性值的改变.将导致其更新自己的 UI 图片
     [self willChangeValueForKey:@"thumbnailImage"];
     [self->_thumbnailImage release];
     self->_thumbnailImage = [image retain];
-    [self  didChangeValueForKey:@"thumbnailImage"];    
+    [self  didChangeValueForKey:@"thumbnailImage"];
+    
 }
 
+
+// Commits the thumbnail data to the Core Data database.
+// 本方法只有在 thumbnail.imageData为空时,才存入数据. 不会更新 thumbnail.
+// 更新 thumbnail ,请调用 updateThumbnail 方法.
 - (void)thumbnailCommitImageData:(UIImage *)image
-    // Commits the thumbnail data to the Core Data database.
 {
-    [[QLog log] logWithFormat:@"photo %@ thumbnail commit image data", self.photoID];
+    [[QLog log] logWithFormat:@"%s photo %@ thumbnail commit image to CoreData. %@",__PRETTY_FUNCTION__, self.photoID ,self.thumbnailGetOperation.request.URL];
     
     // If we have no thumbnail object, create it.
-    
     if (self.thumbnail == nil) {
+        // managedObjectContext 在本类 insertNewPhotoWithProperties:inManagedObjectContext: 方法中注册本类实例时添加上的.
         self.thumbnail = [NSEntityDescription insertNewObjectForEntityForName:@"Thumbnail" inManagedObjectContext:self.managedObjectContext];
         assert(self.thumbnail != nil);
     }
     
     // Stash the data in the thumbnail object's imageData property.
-    
+    // 只有在 thumbnail.imageData为空时,才存入数据.
     if (self.thumbnail.imageData == nil) {
+        
+        // If we were running on iOS 4 or later we could get the PNG representation using
+        // ImageIO, but I want to maintain iOS 3 compatibility for the moment and on that
+        // system we have to use UIImagePNGRepresentation.
         self.thumbnail.imageData = UIImagePNGRepresentation(image);
         assert(self.thumbnail.imageData != nil);
     }
 }
 
+// 被 PhotoCell 类读取,用于赋值到其self.imageView.image属性中,用于 UI 展示.
+//
+// 初次访问,它会暂时将一个 placeholder 的图片返回,并启用异步的加载 operation ,
+// 从网络请求 thumbnail,如果下载成功完成,会紧接着启用 resize operation. 将刚刚下载的 thumbnailImage 重新设置尺寸,
+// 完成后将结果存入 CoreData ,并赋值给self.photo.thumbnailImage.
 - (UIImage *)thumbnailImage
 {
-    if (self->_thumbnailImage == nil) {
-        if ( (self.thumbnail != nil) && (self.thumbnail.imageData != nil) ) {
+    if (self->_thumbnailImage == nil) { //本属性还没有被初始化
+        if ( (self.thumbnail != nil) && (self.thumbnail.imageData != nil) ) { //已经从网络下载了thumbnail,并从 Core Data 获取到
         
             // If we have a thumbnail from the database, return that.
-        
             self.thumbnailImageIsPlaceholder = NO;
             self->_thumbnailImage = [[UIImage alloc] initWithData:self.thumbnail.imageData];
             assert(self->_thumbnailImage != nil);
-        } else {
+            
+        } else { //刚刚初始化的对象,还没有从网络下载数据
+            
             assert(self.thumbnailGetOperation    == nil);   // These should be nil because the only code paths that start 
             assert(self.thumbnailResizeOperation == nil);   // a get also ensure there's a thumbnail in place (either a 
                                                             // placeholder or the old thumbnail).
         
-            // Otherwise, return the placeholder and kick off a get (unless we're 
-            // already getting).
-        
-            self.thumbnailImageIsPlaceholder = YES;
+            // Otherwise, return the placeholder and kick off a get (unless we're already getting).
+            self.thumbnailImageIsPlaceholder = YES;//暂时返回一个 PlaceHolder
             self->_thumbnailImage = [[UIImage imageNamed:@"Placeholder.png"] retain];
             assert(self->_thumbnailImage != nil);
             
-            [self startThumbnailGet];
+            [self startThumbnailGet]; //启用网络下载最新的 thumbnail
         }
     }
     return self->_thumbnailImage;
 }
 
-- (void)updateThumbnail
-    // Updates the thumbnail is response to a change in the photo's XML entity.
-{
-    [[QLog log] logWithFormat:@"photo %@ update thumbnail", self.photoID];
 
-    // We only do an update if we've previously handed out a thumbnail image. 
-    // If not, the thumbnail will be fetched normally when the client first 
-    // requests an image.
+// Updates the thumbnail is response to a change in the photo's XML entity.
+// 更新 thumbnail 的值为从网络下载的 xml 中的数据.
+- (void)updateThumbnail
+{
+    [[QLog log] logWithFormat:@"%s photo %@ update thumbnail. %@",__PRETTY_FUNCTION__, self.photoID,self.thumbnailGetOperation.request.URL];
+
+    // We only do an update if we've previously handed out(分发,公布) a thumbnail image.
+    // If not, the thumbnail will be fetched normally when the client first requests an image.
     
     if (self->_thumbnailImage != nil) {
     
-        // If we're already getting a thumbnail, stop that get (it may be getting from 
-        // the old path).
-        
+        // If we're already getting a thumbnail, stop that get (it may be getting from the old path).
         (void) [self stopThumbnail];
         
         // Nix our thumbnail data.  This ensures that, if we quit before the get is complete, 
         // then, on relaunch, we will notice that we need to get the thumbnail.
-        
         if (self.thumbnail != nil) {
             self.thumbnail.imageData = nil;
         }
@@ -513,18 +568,27 @@ const CGFloat kThumbnailSize = 60.0f;
         // Kick off the network get.  Note that we don't nix _thumbnailImage here.  The client 
         // will continue to see the old thumbnail (which might be a placeholder) until the 
         // get completes.
-        
         [self startThumbnailGet];
     }
+    
 }
+
 
 #pragma mark - Photos
 
-@synthesize photoGetOperation = _photoGetOperation;
-@synthesize photoGetFilePath  = _photoGetFilePath;
-@synthesize photoGetError     = _photoGetError;
+// PhotoDetailViewController 的 viewWillAppear 中调用
+// 声明现在需要大图了.
+- (void)assertPhotoNeeded
+{
+    self->_photoNeededAssertions += 1;
+    if ( (self.localPhotoPath == nil) && ! self.photoGetting ) { //如果还没有下载的话
+        [self startPhotoGet];
+    }
+}
 
 // Starts the HTTP operation to GET the photo itself.
+// 开始下载大图,在 assertPhotoNeeded 中被调用
+// 当前是在 main thread 上运行那个
 - (void)startPhotoGet
 {
     NSURLRequest *      request;
@@ -547,13 +611,13 @@ const CGFloat kThumbnailSize = 60.0f;
     } else {
 
         // We start by downloading the photo to a temporary file.  Create an output stream for that file.
-        self.photoGetFilePath = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"PhotoTemp-%.9f", [NSDate timeIntervalSinceReferenceDate]]];
+        self.photoGetFilePath = [NSTemporaryDirectory() stringByAppendingPathComponent:
+                                  [NSString stringWithFormat:@"PhotoTemp-%.9f", [NSDate timeIntervalSinceReferenceDate]
+                                ]];
         //example :  self.photoGetFilePath = /private/var/mobile/Applications/8181B390-29AC-4311-B18B-E0992F70D8DC/tmp/PhotoTemp-418620304.233712971
-        
         assert(self.photoGetFilePath != nil);
         
         // Create, configure, and start the download operation.
-        
         self.photoGetOperation = [[[RetryingHTTPOperation alloc] initWithRequest:request] autorelease];
         assert(self.photoGetOperation != nil);
         
@@ -563,6 +627,7 @@ const CGFloat kThumbnailSize = 60.0f;
 
         [[QLog log] logWithFormat:@"%s photo %@ photo get start '%@'",__PRETTY_FUNCTION__, self.photoID, self.remotePhotoPath];
         
+        // 添加到网络管理队列, 在其他队列里运行 get 操作
         [[NetworkManager sharedManager] addNetworkManagementOperation:self.photoGetOperation finishedTarget:self action:@selector(photoGetDone:)];
     }
 }
@@ -575,25 +640,20 @@ const CGFloat kThumbnailSize = 60.0f;
     assert([operation isKindOfClass:[RetryingHTTPOperation class]]);
     assert(operation == self.photoGetOperation);
 
-    [[QLog log] logWithFormat:@"%s photo %@ photo get done",__PRETTY_FUNCTION__, self.photoID];
+    [[QLog log] logWithFormat:@"%s photo %@ photo get done '%@'",__PRETTY_FUNCTION__, self.photoID,self.remotePhotoPath];
     
     if (operation.error != nil) {
         [[QLog log] logWithFormat:@"photo %@ photo get error %@", self.photoID, operation.error];
         self.photoGetError = operation.error;
     } else {
-        BOOL        success;
-        NSString *  type;
-        NSString *  extension;
-        NSString *  fileName;
-        NSUInteger  fileCounter;
-        NSError *   error;
-        
+
         // Can't log the incoming data becauses it went directly to disk.
         // 
         // [[QLog log] logOption:kLogOptionNetworkData withFormat:@"receive %@", operation.responseContent];
         
         // Just to keep things sane, we set the file name extension based on the MIME type.
-        
+        NSString *  type;
+        NSString *  extension;
         type = operation.responseMIMEType;
         assert(type != nil);
         if ([type isEqual:@"image/png"]) {
@@ -609,13 +669,18 @@ const CGFloat kThumbnailSize = 60.0f;
         // displaying that photo).
         
         // 这里在移动下载下来的缓存文件到存放图片的目录时,如果这个图片正在使用的话(比如正在查看),可能会有冲突,导致移动不成功.
-        // 所以这里设置了一个循环,去检查有没有移动成功,如果没有移动成功就尝试下一次,知道移动成功.如果连续100次移动不成功,就放弃了.
-        fileCounter = 0;
+        // 所以这里设置了一个循环,去检查有没有移动成功,如果没有移动成功就尝试下一次,直到移动成功.或者如果连续100次移动不成功,就放弃了.
+        NSString *  fileName;
+        NSError *   error;
+        BOOL        success;
+        NSUInteger  fileCounter = 0;
         do {
             fileName = [NSString stringWithFormat:@"Photo-%@-%zu.%@", self.photoID, (size_t) fileCounter, extension];
             assert(fileName != nil);
             
-            success = [[NSFileManager defaultManager] moveItemAtPath:self.photoGetFilePath toPath:[self.photoGalleryContext.photosDirectoryPath stringByAppendingPathComponent:fileName] error:&error];
+            success = [[NSFileManager defaultManager] moveItemAtPath:self.photoGetFilePath
+                                                              toPath:[self.photoGalleryContext.photosDirectoryPath stringByAppendingPathComponent:fileName]
+                                                               error:&error];
             if ( success ) {
                 self.photoGetFilePath = nil;
                 break;
@@ -634,13 +699,15 @@ const CGFloat kThumbnailSize = 60.0f;
             
             oldLocalPhotoPath = [[self.localPhotoPath copy] autorelease];
             
-            [[QLog log] logWithFormat:@"%s photo %@ photo get commit '%@'",__PRETTY_FUNCTION__, self.photoID, fileName];
+            [[QLog log] logWithFormat:@"%s big photo %@ photo get commit '%@'",__PRETTY_FUNCTION__, self.photoID, fileName];
             self.localPhotoPath = fileName;
             assert(self.photoGetError == nil);
             
-            if (oldLocalPhotoPath != nil) {
-                [[QLog log] logWithFormat:@"%s photo %@ photo cleanup '%@'",__PRETTY_FUNCTION__, self.photoID, oldLocalPhotoPath];
-                (void) [[NSFileManager defaultManager] removeItemAtPath:[self.photoGalleryContext.photosDirectoryPath stringByAppendingPathComponent:oldLocalPhotoPath] error:NULL];
+            if (oldLocalPhotoPath != nil) { //说明原来就有这个图片,被新图片替换了
+                [[QLog log] logWithFormat:@"%s big photo %@ photo cleanup '%@'",__PRETTY_FUNCTION__, self.photoID, oldLocalPhotoPath];
+                (void) [[NSFileManager defaultManager]
+                        removeItemAtPath:[self.photoGalleryContext.photosDirectoryPath stringByAppendingPathComponent:oldLocalPhotoPath]
+                        error:NULL];
             }
         } else {
             assert(error != nil);
@@ -649,22 +716,21 @@ const CGFloat kThumbnailSize = 60.0f;
         }
     }
     
-    // Clean up.
-    
+    // Clean up.    
     self.photoGetOperation = nil;
-    if (self.photoGetFilePath != nil) {
+    if (self.photoGetFilePath != nil) { //新下载的大图片还在临时目录下
         (void) [[NSFileManager defaultManager] removeItemAtPath:self.photoGetFilePath error:NULL];
         self.photoGetFilePath = nil;
     }
 }
+
 //Foundation 框架提供的表示属性依赖的机制
 + (NSSet *)keyPathsForValuesAffectingPhotoImage
 {
     return [NSSet setWithObject:@"localPhotoPath"];
 }
-
+// 大图数据
 - (UIImage *)photoImage
-    // See comment in header.
 {
     UIImage *   result;
     
@@ -672,7 +738,7 @@ const CGFloat kThumbnailSize = 60.0f;
     // is probably a mistake.  It's likely that the caller is going to retain the photo anyway 
     // (by putting it into an image view, say).
     
-    if (self.localPhotoPath == nil) {
+    if (self.localPhotoPath == nil) {   //大图还没有被下载下来
         result = nil;
     } else {
         result = [UIImage imageWithContentsOfFile:[self.photoGalleryContext.photosDirectoryPath stringByAppendingPathComponent:self.localPhotoPath]];
@@ -682,29 +748,21 @@ const CGFloat kThumbnailSize = 60.0f;
     }
     return result;
 }
+
 //Foundation 框架提供的表示属性依赖的机制
 + (NSSet *)keyPathsForValuesAffectingPhotoGetting
 {
     return [NSSet setWithObject:@"photoGetOperation"];
 }
-
+//返回, 获取大图的操作是否在进行
 - (BOOL)photoGetting
-    // See comment in header.
 {
     return (self.photoGetOperation != nil);
 }
 
-- (void)assertPhotoNeeded
-    // See comment in header.
-{
-    self->_photoNeededAssertions += 1;
-    if ( (self.localPhotoPath == nil) && ! self.photoGetting ) {
-        [self startPhotoGet];
-    }
-}
-
+// PhotoDetailViewController 的 viewDidDisappear 中调用
+// Tell the model object is no longer needs to keep the photo image up-to-date.
 - (void)deassertPhotoNeeded
-    // See comment in header.
 {
     assert(self->_photoNeededAssertions != 0);
     self->_photoNeededAssertions -= 1;
@@ -721,19 +779,17 @@ const CGFloat kThumbnailSize = 60.0f;
 
     if (self->_photoNeededAssertions == 0) {
     
-        // No one is actively looking at the photo.  If we have the photo downloaded, 
-        // just forget about it.
-    
+        // No one is actively looking at the photo.  If we have the photo downloaded, just forget about it.    
         if (self.localPhotoPath != nil) {
             [[QLog log] logWithFormat:@"photo %@ photo delete old photo '%@'", self.photoID, self.localPhotoPath];
-            [[NSFileManager defaultManager] removeItemAtPath:[self.photoGalleryContext.photosDirectoryPath stringByAppendingPathComponent:self.localPhotoPath] error:NULL];
+            [[NSFileManager defaultManager] removeItemAtPath:[self.photoGalleryContext.photosDirectoryPath stringByAppendingPathComponent:self.localPhotoPath]
+                                                       error:NULL];
             self.localPhotoPath = nil;
         }
+        
     } else {
 
-        // If we're already getting the photo, stop that get (it may be getting from 
-        // the old path).
-        
+        // If we're already getting the photo, stop that get (it may be getting from the old path).
         if (self.photoGetOperation != nil) {
             [[NetworkManager sharedManager] cancelOperation:self.photoGetOperation];
             self.photoGetOperation = nil;

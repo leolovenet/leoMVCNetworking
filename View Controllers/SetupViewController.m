@@ -28,10 +28,10 @@
 @synthesize activeTextField = _activeTextField;
 
 + (void)resetChoices
-    // See comment in header.
 {
     [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"setupChoices"];
 }
+
 
 - (id)initWithGalleryURLString:(NSString *)galleryURLString
 {

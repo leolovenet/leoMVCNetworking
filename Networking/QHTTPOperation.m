@@ -15,7 +15,7 @@ NSString * kQHTTPOperationErrorDomain = @"kQHTTPOperationErrorDomain";
 @property (retain, readwrite) NSURLConnection *     connection;
 //一般为 C primitive properties 指定为 assign
 @property (assign, readwrite) BOOL                  firstData;        //用来标识,是否已经初始化了 dataAccumulator
-@property (retain, readwrite) NSMutableData *       dataAccumulator; //用来保存陆续到来的网络回应数据
+@property (retain, readwrite) NSMutableData *       dataAccumulator;  //用来保存陆续到来的网络回应数据
 
 #if ! defined(NDEBUG)
 @property (retain, readwrite) NSTimer *             debugDelayTimer;
@@ -213,8 +213,6 @@ NSString * kQHTTPOperationErrorDomain = @"kQHTTPOperationErrorDomain";
 }
 
 
-
-
 //关闭对 defaultResponseSize 的自动 KVO 通知
 + (BOOL)automaticallyNotifiesObserversOfDefaultResponseSize
 {
@@ -384,7 +382,7 @@ NSString * kQHTTPOperationErrorDomain = @"kQHTTPOperationErrorDomain";
 // We override -finishWithError: just so we can handle our debug delay.
 - (void)finishWithError:(NSError *)error
 {
-    // If a debug delay was set, don't finish now but rather start the debug delay timer 
+      // If a debug delay was set, don't finish now but rather start the debug delay timer 
     // and have it do the actual finish.  We clear self.debugDelay so that the next 
     // time this code runs its doesn't do this again.
     //
@@ -570,9 +568,9 @@ NSString * kQHTTPOperationErrorDomain = @"kQHTTPOperationErrorDomain";
  */
 - (NSURLRequest *)connection:(NSURLConnection *)connection willSendRequest:(NSURLRequest *)request redirectResponse:(NSURLResponse *)response
 {
+    #pragma unused(connection)
     assert(self.isActualRunLoopThread);
     assert(connection == self.connection);
-    #pragma unused(connection)
     assert( (response == nil) || [response isKindOfClass:[NSHTTPURLResponse class]] );
 
     self.lastRequest  = request;
@@ -580,12 +578,28 @@ NSString * kQHTTPOperationErrorDomain = @"kQHTTPOperationErrorDomain";
     return request;
 }
 
+/*
+ response 的例子:
+ <NSHTTPURLResponse: 0x3a6740> { URL: http://leo-macbook-pro.local:8888/TestGallery/index2.xml } 
+ { 
+ status code: 200, headers {
+ "Accept-Ranges" = bytes;
+ Connection = "keep-alive";
+ "Content-Length" = 3751;
+ "Content-Type" = "text/xml";
+ Date = "Thu, 24 Apr 2014 04:52:54 GMT";
+ Etag = "\"4ca5ca74-ea7\"";
+ "Last-Modified" = "Fri, 01 Oct 2010 11:48:04 GMT";
+ Server = "nginx/1.4.4";
+ }
+ }
+*/
 
 - (void)connection:(NSURLConnection *)connection didReceiveResponse:(NSURLResponse *)response
 {
+    #pragma unused(connection)
     assert(self.isActualRunLoopThread);
     assert(connection == self.connection);
-    #pragma unused(connection)
     assert([response isKindOfClass:[NSHTTPURLResponse class]]);
 
     self.lastResponse = (NSHTTPURLResponse *) response;

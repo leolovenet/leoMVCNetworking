@@ -83,11 +83,11 @@ enum {
     NSUInteger          _defaultResponseSize;
     NSUInteger          _maximumResponseSize;
     NSURLConnection *   _connection;
-    BOOL                _firstData;
-    NSMutableData *     _dataAccumulator;
+    BOOL                _firstData;         // 用来标识,是否已经初始化了 dataAccumulator
+    NSMutableData *     _dataAccumulator;   // 用来保存陆续到来的网络回应数据
     NSURLRequest *      _lastRequest;
-    NSHTTPURLResponse * _lastResponse;
-    NSData *            _responseBody;
+    NSHTTPURLResponse * _lastResponse;      // 因为URL请求可能有重定向的情况,所以此属性保存最近一次的服务器HTTP回应头信息
+    NSData *            _responseBody;      // 用于保存服务器的回应数据,是在回应数据传输完成以后,将 _dataAccumulator 的值付给 responseBody
 #if ! defined(NDEBUG)
     NSError *           _debugError;
     NSTimeInterval      _debugDelay;
@@ -193,10 +193,10 @@ enum {
 @end
 
 
+
 #pragma mark - Protocol QHTTPOperationAuthenticationDelegate
 @protocol QHTTPOperationAuthenticationDelegate <NSObject>
 @required
-
 // These are called on the operation's run loop thread and have the same semantics as their 
 // NSURLConnection equivalents.  It's important to realise that there is no 
 // didCancelAuthenticationChallenge callback (because NSURLConnection doesn't issue one to us).  

@@ -1,12 +1,31 @@
 #import "MakeThumbnailOperation.h"
 
+/*
+    o 本类继承自 NSOperation,  通过重写 main 方法 来定义自己的 NSOperation.
+        这种方法非常简单，开发者不需要管理一些状态属性(例如isExecuting 和 isFinished )，当 main 方法返回的时候，这个NSOperation就结束了
+ */
+
+
 @implementation MakeThumbnailOperation
 
+@synthesize imageData     = _imageData;
+@synthesize MIMEType      = _MIMEType;
+@synthesize thumbnailSize = _thumbnailSize;
+@synthesize thumbnail     = _thumbnail;
+
+/*!
+ *  初始化一个 resize operation
+ *
+ *  @param imageData  从网络下载下来的 image
+ *  @param MIMEType  HTTP 回应的 image MIMEType格式
+ *
+ *  @return 返回一个本类的实例
+ */
 - (id)initWithImageData:(NSData *)imageData MIMEType:(NSString *)MIMEType
-    // See comment in header.
 {
     assert(imageData != nil);
     assert(MIMEType != nil);
+    
     self = [super init];
     if (self != nil) {
         self->_imageData = [imageData copy];
@@ -24,31 +43,23 @@
     [super dealloc];
 }
 
-@synthesize imageData     = _imageData;
-@synthesize MIMEType      = _MIMEType;
-
-@synthesize thumbnailSize = _thumbnailSize;
-
-@synthesize thumbnail     = _thumbnail;
-
+#pragma mark - 入列后开始执行的函数
+// 本方法,在本 operation 的实例添加的一个 queue 后调用执行
 - (void)main
 {
-    CGDataProviderRef   provider;
-    CGImageRef          sourceImage;
-    CGFloat             thumbnailSize;
-
     // Latch thumbnailSize for performance, and also to prevent it changing out from underneath us.
-    
+    CGFloat             thumbnailSize;
     thumbnailSize = self.thumbnailSize;
 
     assert(self.imageData != nil);
     assert(self.MIMEType != nil);
     
     // Set up the source CGImage.
-    
+    CGDataProviderRef   provider;
     provider = CGDataProviderCreateWithCFData( (CFDataRef) self.imageData);
     assert(provider != NULL);
-    
+
+    CGImageRef          sourceImage;
     if ( [self.MIMEType isEqual:@"image/jpeg"] ) {
         sourceImage = CGImageCreateWithJPEGDataProvider(provider, NULL, true, kCGRenderingIntentDefault);
     } else if ( [self.MIMEType isEqual:@"image/png"] ) {
@@ -72,7 +83,6 @@
         assert(white != NULL);
 
         // Create the context that's thumbnailSize x thumbnailSize.
-        
         context = CGBitmapContextCreate(NULL, thumbnailSize, thumbnailSize, 8, 0, space, kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
         if (context != NULL) {
             CGRect  r;

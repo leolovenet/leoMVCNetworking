@@ -9,9 +9,10 @@
     CGImageRef      _thumbnail;
 }
 
+// Configures the operation to create a thumbnail based on the specified data,
+// which must be of type "image/jpeg" or "image/png".
 - (id)initWithImageData:(NSData *)imageData MIMEType:(NSString *)MIMEType;
-    // Configures the operation to create a thumbnail based on the specified data, 
-    // which must be of type "image/jpeg" or "image/png".
+
 
 // properties specified at init time
 

@@ -7,7 +7,7 @@
 // When one operation completes it posts the following notification.  Other operations 
 // listen for that notification and, if the host name matches, expedite their retry. 
 // This means that, if one request succeeds, subsequent requests will retry quickly.
-// 如果一个操作完成,它 post 下面的通知. 其他的操作监听这个通知, 如果 hostName 匹配,加速他们的请求尝试
+// 如果一个操作完成,它 post 下面的通知. 其他的操作监听这个通知, 如果 hostName 匹配,加速他们对请求尝试
 // 这意味着,如果一个请求成功, 随后的请求将非常快的开始
 
 static NSString * kRetryingHTTPOperationTransferDidSucceedNotification = @"com.apple.dts.kRetryingHTTPOperationTransferDidSucceedNotification";
@@ -39,9 +39,14 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
 /*
  
  本类继承自 QRunLoopOperation , 因此 本类也是一个 Operation.
- 但是本类属于在 QHTTPOperation 上层的网络管理队列里执行的 Operation.直接被Model 层的PhotoGallery类调用.
+    QRunLoopOperation的主要方法,也是需要子类重写的方法就是:
+        (1) operationDidStart
+        (2) operationWillFinish
+        (3) finishWithError
+
+ 但是本类属于在网络管理队列里执行的 Operation. 直接被 Model 层的 PhotoGallery 类调用.
     (1) 本类的实例对象将被添加到 NetworkManger 的 网络管理队列(queueForNetworkManagement) 上执行
-    (2) QHTTPOperation/QReachabilityOperation 等操作是被添加到 NetworkManger 的网络传输队列(queueForNetworkTransfers),属于更下层的操作.
+    (2) QHTTPOperation/QReachabilityOperation 操作是被添加到 NetworkManger 的网络传输队列(queueForNetworkTransfers),属于更下层的操作.
 
 */
 
@@ -63,7 +68,7 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
     
     // For example, you could imagine a situation where an automatically retried POST might 
     // cause a gazillion identical messages to show up on a bulletin board wall site.
-    // 比如, 你可以想象这样的场景, 当一个自动重新尝试 POST,可能导致极大的完全一样的消息现实在公告墙站点上.
+    // 比如, 你可以想象这样的场景, 当一个自动重新尝试 POST,可能导致大量完全一样的消息现实在公告墙站点上.
     
     #if ! defined(NDEBUG)
         static NSSet * sIdempotentHTTPMethods;
@@ -80,8 +85,8 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
 
     self = [super init];
     if (self != nil) {
-        @synchronized ([self class]) {
-            static NSUInteger sSequenceNumber;// 默认是0
+        @synchronized ([self class]) {                // 原子级别操作
+            static NSUInteger sSequenceNumber;        // 默认是0,本类实例不同的对象间传递数据,是通过 static 类存储描述符.
             self->_sequenceNumber = sSequenceNumber;  // 表示第几个请求,每次新初始化一个本类对象,这个值就加1
             sSequenceNumber += 1;
         }
@@ -110,29 +115,36 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
 #pragma mark - Properties
 
 @synthesize request = _request;
+
+//Model层 PhotoGallery 会在 main thread 上访问这个属性,用于判断在 UI 的状态条上表明什么文字. 所以这个属性值的更改也必须在主线程上面.
 @synthesize retryStateClient       = retryStateClient;
+
+//Model层 Photo 会在 main thread 上访问这个属性,用于判断展示的 thumbnail 的 placehoder 是否需要更新一个新的图片,表示图片获取在重新尝试. 所以这个属性值的更改也必须在主线程上面.
 @synthesize hasHadRetryableFailure = _hasHadRetryableFailure;  //是否已经进行过失败重试了
+
 @synthesize acceptableContentTypes = _acceptableContentTypes;
 @synthesize responseFilePath       = _responseFilePath;
 @synthesize response               = _response;
-@synthesize networkOperation       = _networkOperation;  //被管理的真正执行 HTTP GET的方法实例
+@synthesize networkOperation       = _networkOperation;        //被管理的真正执行 HTTP GET的方法实例
 @synthesize retryTimer             = _retryTimer;
 @synthesize retryCount             = _retryCount;
 @synthesize reachabilityOperation  = _reachabilityOperation;
 @synthesize notificationInstalled  = _notificationInstalled;  //如果一个下载成功后,立即通知其他此 server 的下载重新尝试的notification callback 是否已经安装了
-@synthesize responseContent = _responseContent;               //URL 返回的内容
+@synthesize responseContent = _responseContent;               //URL请求返回的内容
 
 
+//  本方法在被添加到 NetworkManger 的 网络管理队列(queueForNetworkManagement) 上执行
 - (RetryingHTTPOperationState)retryState
 {
     return self->_retryState;
 }
-
 /*!
  *  我们并不需要非得需要重写这个 setter 方法, 但是,这里是刷新更新状态的好地方.
  *  We don't really need this custom setter, but it's a great way to flush
  *  out redundant update problems.
+ 
  *  本方法在被添加到 NetworkManger 的 网络管理队列(queueForNetworkManagement) 上执行
+ 
  *  @param newState 即将赋值给self->_retryState新值
  */
 - (void)setRetryState:(RetryingHTTPOperationState)newState
@@ -143,16 +155,15 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
     
     [self performSelectorOnMainThread:@selector(syncRetryStateClient) withObject:nil waitUntilDone:NO];
 }
-
 /*!
  *  在主线程上执行同步 self.retryStateClient
- *  本方法在被添加到 NetworkManger 的 网络管理队列(queueForNetworkManagement) 上执行
  */
 - (void)syncRetryStateClient
 {
     assert([NSThread isMainThread]);
     self.retryStateClient = self.retryState;
 }
+
 
 - (NSString *)responseMIMEType
 {
@@ -171,7 +182,8 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
 
 /*!
  *  Sets the hasHadRetryableFailure on the main thread.
- *  这个 property 总是在 main 线程上改变. 这使 main 线程代码很容易展示 'retrying' 的用户界面.
+ *
+ *  Model层 Photo 会在 main thread 上访问这个属性,用于判断展示的 thumbnail 的 placehoder 是否需要更新一个新的图片,表示图片获取在重新尝试. 所以这个属性值的更改也必须在主线程上面.
  */
 - (void)setHasHadRetryableFailureOnMainThread
 {
@@ -365,6 +377,7 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
         } else { //继续重新尝试请求
             
             // If this is our first retry, tell our client that we are in retry mode.
+            // Model 层的 Photo 类,对此值进行监控,如果此值发生变化,代表第一次从网络获得 thumbnail 失败.启用 placeholder 为 thumbnail
             if (self.retryState == kRetryingHTTPOperationStateGetting) {
                 [self performSelectorOnMainThread:@selector(setHasHadRetryableFailureOnMainThread) withObject:nil waitUntilDone:NO];
             }
@@ -521,8 +534,8 @@ static NSString * kRetryingHTTPOperationTransferDidSucceedHostKey = @"hostName";
     }
 
     [self.reachabilityOperation setQueuePriority:[self queuePriority]];
-    self.reachabilityOperation.runLoopThread = self.runLoopThread;
-    self.reachabilityOperation.runLoopModes  = self.runLoopModes;
+    self.reachabilityOperation.runLoopThread = self.runLoopThread;  //继承自父类的属性runloopThread,在本 Operation 被添加到 NetworkManger 后并被设置值.
+    self.reachabilityOperation.runLoopModes  = self.runLoopModes;   //继承自父类的属性runLoopModes
 
     [[NetworkManager sharedManager] addNetworkManagementOperation:self.reachabilityOperation
                                                    finishedTarget:self

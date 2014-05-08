@@ -16,14 +16,71 @@
 @end
 
 
+
+/*
+ 本程序的目的就是展示一组照片.
+ 关于展示那一组,那组里的什么照片,以及有关照片的属性信息等问题,都是向服务器发起请求一个预先定义好的 galleryURLString 构成的 URL 所代表的 xml 文件,然后分析里面的数据得到的.
+ 程序将获取到的数据存储到 CoreData 中. 并在 PhotoGaleryViewController 中对 CoreData 的数据做了监控,只要 CoreData 的数据发生了改变,就会更新 UI.
+ 这样我们就看到了手机展示那些图片.
+ 所以,程序一开始的时候,就让选择一个 galleryURLString, 然后会想这个 URL 发起请求,获得 xml,然后分析里面的数据,存储到 CoreData 中.
+ 
+ 
+ NetworkManager 类对象为本程序的一个单例(即贯穿整个程序的存在),并且负责管理所有关于网络的操作.
+ 可以通过 NetworkManger 的类方法 sharedMangeer 获得此单例.
+ 在这个单例中保存了添加的 Operation, Operation 被添加到的 Queue, Operation 完成后调用那个 target 的那个 method 等4个主要信息.
+ NetworkManger 还单纯创建了一个 theard, 用于在非 main theard 上执行网络操作,防止阻碍系统的 UI.
+ 所有关于网络的 Operation 都需要添加到这个单例上面去登记执行,然后单例负责在 operation 完成后启用回调函数.
+ 可以说,NetworkManger 是本程序对所有网络操作的一个封装,这样,使我们在编写业务逻辑时,而不必顾虑底层网络操作的种种细节,只要向 NetworkManger 的单例里丢要求(Operation),然后登记要求满足(完成)后,调用什么方法继续处理就好了.
+ 
+ NetworkManger 类里主要包含了 NSOperation, NSOperationQueue, thread , NSRunLoop 等技术.
+ 
+ 
+ 在程序启动时, applicationDidFinishLaunching 方法初始化 NetworkManager 的单例.
+ 然后查找是否已经保存了关于一组照片的 URL 地址,如果存在就初始化 PhotoGalleryViewController 实例,
+ 该实例负责初始化一些获取此 URL 的 Operation ,然后添加到 NetworkManger 的单例中去.并登记操作完成后,在那个 Queue 里调用那个方法.
+ 这样等 get URL 相关的 xml 文件的操作完成以后,就会开启 GalleryParserOperation 操作,分析 xml,保存有用数据到 CoreData.
+ 
+ 
+ [M] model 层
+ [V] View 层
+ [C] Control 层
+ 
+                      self
+                        |
+          |----------------------------------|
+          |                 PhotoGaaleryViewController:UITableViewController[C]
+          |                         |                      |
+ PhotoGallery[M] <--  ==  --> PhotoGallery[M]          UITableView[V]
+          |                         |                      |
+          |                         |                  PhotoCell[V]
+          |                         |                      |
+          |                         |                   Photo[M]
+          |                         |
+         --------------------------------------------------------------------------
+          |                         |                     |                       |
+    QRunLoopOperation  GalleryParserOperation    NSManagedObjectContext           |
+          |                                               |                       |
+   RetryingHTTPOperation                         PhotoGalleryContext              |
+                                                          |                       |
+                                                       CoreData                   |
+                                                        |   |                     |
+                                                Thunbmail  Photo
+ 
+ 
+ 
+ 
+ */
+
+
+
 #pragma mark - implementation AppDelegate
 
 @implementation AppDelegate
 
-@synthesize window        = _window;
-@synthesize navController = _navController;
+@synthesize window                     = _window;
+@synthesize navController              = _navController;
 @synthesize galleryURLString           = _galleryURLString;
-@synthesize photoGallery               = _photoGallery;
+@synthesize photoGallery               = _photoGallery;    //代表一组照片的 photogallery 对象.
 @synthesize photoGalleryViewController = _photoGalleryViewController;
 
 #define GALLERY_URL_STRING_KEY @"galleryURLString"
@@ -47,6 +104,7 @@
     // Add an observer to the network manager's networkInUse property so that we can  
     // update the application's networkActivityIndicatorVisible property(控制这状态来的网络加载指示器的显示与否).
     // This has the side effect of starting up the NetworkManager singleton.
+    // 因为启用了NSKeyValueObservingOptionInitial 选项,所以会导致立即调用本类的observeValueForKeyPath:ofObject:change:context: 方法
     [[NetworkManager sharedManager] addObserver:self forKeyPath:@"networkInUse" options:NSKeyValueObservingOptionInitial context:NULL];
 
     // If the "applicationClearSetup" user default is set, clear our preferences. 
@@ -67,7 +125,8 @@
     }
     
     if (self.galleryURLString != nil) {
-        // 如果之前的操作已经保存了 gallery 的 url,这里就以那个 gallery 初始化 self.photoGallery
+        // 如果之前的操作已经保存了 gallery 的 URL, 那么就以这个 URL 初始化 self.photoGallery
+        // self.photoGallery 代表了从网络获取galleryURLString所指的 xml 后,分析数据得到的一组照片信息.
         self.photoGallery = [[[PhotoGallery alloc] initWithGalleryURLString:self.galleryURLString] autorelease];
         assert(self.photoGallery != nil);
         
@@ -77,6 +136,8 @@
     // Set up the main view to display the gallery (if any).  We add our Setup button to the 
     // view controller's navigation items, which seems like a bit of a layer break but it 
     // makes some sort of sense because we want the actions directed to us.
+    
+    // 代表一组Photo对象集合的 self.photoGallery 对象,可能还没有初始化,也可能已经在上面通过 self.galleryURLString 初始化了.
     self.photoGalleryViewController = [[[PhotoGalleryViewController alloc] initWithPhotoGallery:self.photoGallery] autorelease];
     assert(self.photoGalleryViewController != nil);
 
@@ -94,6 +155,7 @@
 
     // If the user hasn't configured the app, push the setup view controller.
     if (self.galleryURLString == nil) {
+        // 展示选择 galleryURLString 的界面,主要用于初始化self.photoGallery
         [self presentSetupViewControllerAnimated:NO];
     }
 }
@@ -213,6 +275,8 @@
     assert(context == NULL);
     assert( [NSThread isMainThread] );
     [UIApplication sharedApplication].networkActivityIndicatorVisible = [NetworkManager sharedManager].networkInUse;
+      
+      
   } else if (NO) {   // Disabled because the super class does nothing useful with it.
     [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
   }

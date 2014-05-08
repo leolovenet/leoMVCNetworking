@@ -10,10 +10,10 @@
 
 @implementation QImageScrollView
 
+// Returns YES if the hardware we're running on is not capable of handling
+// large images.  For more information about this, see the comments where
+// _limitImageSize is used, later in this file.
 static BOOL LimitImageSize(void)
-    // Returns YES if the hardware we're running on is not capable of handling 
-    // large images.  For more information about this, see the comments where 
-    // _limitImageSize is used, later in this file.
 {
     BOOL    result;
     int     err;
@@ -55,7 +55,7 @@ static BOOL LimitImageSize(void)
     
     self->_limitImageSize = LimitImageSize();
     
-    [[QLog log] logWithFormat:@"image scroll limit size %s", self->_limitImageSize ? "limited" : "unlimited"];
+    [[QLog log] logWithFormat:@"%s image scroll limit size %s", __PRETTY_FUNCTION__, self->_limitImageSize ? "limited" : "unlimited"];
 }
 
 - (id)initWithFrame:(CGRect)frame
@@ -123,7 +123,7 @@ static BOOL LimitImageSize(void)
     }
 }
 
-#pragma mark * Scroll view delegate callbacks
+#pragma mark - Scroll view delegate callbacks
 
 - (UIView *)viewForZoomingInScrollView:(UIScrollView *)scrollView
 {
@@ -132,7 +132,7 @@ static BOOL LimitImageSize(void)
     return self.imageView;
 }
 
-#pragma mark * Properties
+#pragma mark - Properties
 
 @synthesize image     = _image;
 @synthesize imageView = _imageView;

@@ -4,28 +4,36 @@
 
 @interface NetworkManager ()
 
+@property (nonatomic, retain, readonly ) NSThread *             networkRunLoopThread;  //This thread runs all of our network operation run loop callbacks.
+@property (nonatomic, retain, readonly ) NSOperationQueue *     queueForNetworkTransfers;
+@property (nonatomic, retain, readonly ) NSOperationQueue *     queueForNetworkManagement;
+@property (nonatomic, retain, readonly ) NSOperationQueue *     queueForCPU;
+
+@end
+
+
 // 本类主要管理网络操作相关的环境
 //   最主要的方法是 , 添加一个 Operation 到 Queue, 并在 Operation 完成以后,调用 target 的 action
 //
 //   - (void)addOperation:(NSOperation *)operation toQueue:(NSOperationQueue *)queue finishedTarget:(id)target action:(SEL)action
-//      Queue 为本类 3 个 NSOperationQueue 类型的 property 中的一个.
-//          1) queueForNetworkTransfers
-//          2) queueForNetworkManagement
-//          3) queueForNetworkManagement
-//      所有的操作,都是在对应的 Queue 上完成的, 对于不同的操作,拥有不通的 MaxConcurrentOperationCount 值, 意思是 并行队列 or 串行队列
-//      其他的具体网络操作类 负载调用本类的 addOperation:toQueue:finishedTarget:action: 方法,向上面3个 NSOperationQueue 类型的 property 之一添加 operation
+//      toQueue 的值为本类 3 个 NSOperationQueue 类型的 property 中的一个.
+//          1) queueForNetworkTransfers     { QReachabilityOperation, QHTTPOperation }
+//          2) queueForNetworkManagement    { RetryingHTTPOperation }
+//          3) queueForCPU                  { GalleryParseoperation,MakeThumbnailOperation}
+//      所有的 operation, 都是在对应的 Queue 上完成的, 对于不同的 operation, 拥有不通的 MaxConcurrentOperationCount 值, 意思是 "并行队列" or "串行队列"
+//      其他的具体网络操作类负载调用本类的 addOperation:toQueue:finishedTarget:action: 方法,向上面3个 NSOperationQueue 类型的 property 之一添加 operation
 //          o 而添加 Operation 时,会创建一个 KVO 的监控, 监控新添加的 Opration 的 isFinished 属性,表示如果操作完成,就通知本类回调响应的处理,即,启用相应的回调函数.
 //              创建 KVO 时,把对应的 queue 传入,这样再操作完成时,我们就知道是那个 queue 里的 operation 完成了.
-//                  我们没有在map中保存 queue 的数据,不能通过 map 知道 operation 是那个 queue 的,所以这里要传入 queue
-//          o 添加 Operation 时, 通过测试 其他网络操作类 是否有 setRunLoopThread 方法,并设置为本类的 networkRunLoopThread 属性,
-//              达到等到对应的 operation 完成以后,由本类的 networkRunLoopThread 线程处理对应的 target action 回调的目的,这样可以避免 main 线程的堵塞.
+//                  我们没有在 map 中保存 queue 的数据,不能通过 map 知道 operation 是那个 queue 的,所以这里要传入 queue
+//          o 添加 Operation 时, 通过测试 其他网络操作类是否有 setRunLoopThread 方法,并设置为本类的 networkRunLoopThread 属性,
+//              等到对应的 operation 完成以后,由本类的 networkRunLoopThread 线程处理对应的 target action 回调的目的,这样可以避免 main 线程的堵塞.
 
 // 监控到isFinished 消息后,启用 target action 回调 主要涉及到4个对象:
 //  1) operation
 //  2) thread
 //  3) target
 //  4) action
-//  这4个对象的关系是: operatin 被添加到了不通的queue 中,所以在不同的 thread 上运行, 并在 Operation 完成后调用 target 的 action 方法.
+//  这4个对象的关系是: operatin 被添加到了不通的 queue 中,所以在不同的 thread 上运行, 并在 Operation 完成后调用 target 的 action 方法.
 //      意思是说, 把任务分摊到不通的线程上执行,等到执行完毕以后,再调用回调函数
 
 //  这4个对象是以字典的形式,全部以 operatin 为 key 保存到对应的字典中
@@ -42,13 +50,6 @@
 // -------- NSOperationQueue .......
 
 
-
-@property (nonatomic, retain, readonly ) NSThread *             networkRunLoopThread;  //This thread runs all of our network operation run loop callbacks.
-@property (nonatomic, retain, readonly ) NSOperationQueue *     queueForNetworkTransfers;
-@property (nonatomic, retain, readonly ) NSOperationQueue *     queueForNetworkManagement;
-@property (nonatomic, retain, readonly ) NSOperationQueue *     queueForCPU;
-
-@end
 
 @implementation NetworkManager
 
@@ -140,7 +141,6 @@
 }
 
 - (NSMutableURLRequest *)requestToGetURL:(NSURL *)url
-    // See comment in header.
 {
     NSMutableURLRequest *   result;
     static NSString *       sUserAgentString;
@@ -167,10 +167,10 @@
 
 #pragma mark - Operation dispatch
 
+// This thread runs all of our network operation run loop callbacks.
+// 这个线程运行所有的网络请求操作 回调, 即, target action 的回调
+// 通过在 调用 addOperation:toQueue:finishedTarget:action: 方法时,测试其他网络操作类是否有 setRunLoopThread 方法,并设置为本类的 networkRunLoopThread 属性
 - (void)networkRunLoopThreadEntry
-    // This thread runs all of our network operation run loop callbacks.
-    // 这个线程运行所有的网络请求操作 回调, 即, target action 的回调
-    // 通过在 调用 addOperation:toQueue:finishedTarget:action: 方法时,测试其他网络操作类是否有 setRunLoopThread 方法,并设置为本类的 networkRunLoopThread 属性
 {
     assert( ! [NSThread isMainThread] );
     while (YES) {
@@ -190,9 +190,9 @@
     assert(NO);
 }
 
+// See comment in header.
+// 此方法直接放映在application Delegate 里,决定是否显示网络在使用的那个 loading 图标
 - (BOOL)networkInUse
-    // See comment in header.
-    // 此方法直接放映在application Delegate 里,决定是否显示网络在使用的那个 loading 图标
 {
     assert([NSThread isMainThread]);
     
@@ -207,6 +207,7 @@
     return self->_runningNetworkTransferCount != 0;
 }
 
+//涉及到 UI 的操作,都需要在 main tread 上运行
 - (void)incrementRunningNetworkTransferCount
 {
     BOOL    movingToInUse;
@@ -223,6 +224,7 @@
     }
 }
 
+//涉及到 UI 的操作,都需要在 main tread 上运行
 - (void)decrementRunningNetworkTransferCount
 {
     BOOL    movingToNotInUse;
@@ -243,8 +245,8 @@
 #pragma mark - add Operation
 
 //添加一个 Operation 到 Queue, 并在 Operation 完成以后,调用 target 的 action.
+// Core code to enqueue an operation on a queue.
 - (void)addOperation:(NSOperation *)operation toQueue:(NSOperationQueue *)queue finishedTarget:(id)target action:(SEL)action
-    // Core code to enqueue an operation on a queue.
 {
     // any thread
     assert(operation != nil);
@@ -278,19 +280,18 @@
         }
 #endif
 
-    // Update our networkInUse property; because we can be running on any thread,
-    // we do this update on the main thread.
-    // 设计到 UI 操作的都要在 main thread.
-    if (queue == self.queueForNetworkTransfers) {
+    // Update our networkInUse property;
+    // because we can be running on any thread, we do this update on the main thread.
+    if (queue == self.queueForNetworkTransfers) { //如果有人使用网络传输队列,就要在系统状态条上现实网络使用 loading 图标.
+        // 设计到 UI 操作的都要在 main thread.
         [self performSelectorOnMainThread:@selector(incrementRunningNetworkTransferCount) withObject:nil waitUntilDone:NO];
     }
     
     // Atomically enter the operation into our target and action maps.
-    // 这里为什么要 synchronized ? 因为对核心关键map数据的操作,有可能会和 cancel动作有竞争关系.
+    // 这里为什么要 synchronized ? 因为对核心关键 map 数据的操作,有可能会和 cancel 动作有竞争关系.
     @synchronized (self) {
         assert( CFDictionaryGetCount(self->_runningOperationToTargetMap) == CFDictionaryGetCount(self->_runningOperationToActionMap) );
         assert( CFDictionaryGetCount(self->_runningOperationToTargetMap) == CFDictionaryGetCount(self->_runningOperationToThreadMap) );
-        
         assert( CFDictionaryGetValue(self->_runningOperationToTargetMap, operation) == NULL );      // shouldn't already be in our map
         assert( CFDictionaryGetValue(self->_runningOperationToActionMap, operation) == NULL );      // shouldn't already be in our map
         assert( CFDictionaryGetValue(self->_runningOperationToThreadMap, operation) == NULL );      // shouldn't already be in our map
@@ -321,16 +322,15 @@
     [operation addObserver:self forKeyPath:@"isFinished" options:0 context:queue];
     
     // Queue the operation.  When the operation completes,  [self operationDone] is called.
-    // 将这个operation入列,入列后,operation立即执行
+    // 将这个operation入列,入列后, operation 立即执行
     [queue addOperation:operation];
 }
 
 - (void)addNetworkManagementOperation:(NSOperation *)operation finishedTarget:(id)target action:(SEL)action
-    // See comment in header.
 {
     // 检测是否为 QRunLoopOperation 类(或子类),如果是,则调用operation的 setRunLoopThread 设置为 self.networkRunLoopThread
     // 这样回调函数就会在 networkRunLoopThread 线程上运行了,否则会在 main thread 上运行,有可能堵塞 UI.
-    if ([operation respondsToSelector:@selector(setRunLoopThread:)]) {
+    if ([operation respondsToSelector:@selector(setRunLoopThread:)]) { //这里用到了QHTTPOperation 的方法.所以要引入那个H文件
         if ( [(id)operation runLoopThread] == nil ) { // 确保只设置一次 runLoop
             [ (id)operation setRunLoopThread:self.networkRunLoopThread];
         }
@@ -340,11 +340,10 @@
 
 
 - (void)addNetworkTransferOperation:(NSOperation *)operation finishedTarget:(id)target action:(SEL)action
-    // See comment in header.
 {
     // 检测是否为 QRunLoopOperation 类(或子类),如果是,则调用operation的 setRunLoopThread 设置为 self.networkRunLoopThread
     // 这样回调函数就会在 networkRunLoopThread 线程上运行了,否则会在 main thread 上运行,有可能堵塞 UI.
-    if ([operation respondsToSelector:@selector(setRunLoopThread:)]) {
+    if ([operation respondsToSelector:@selector(setRunLoopThread:)]) { //这里用到了QHTTPOperation 的方法.所以要引入那个H文件
         if ( [(id)operation runLoopThread] == nil ) { // 确保只设置一次 runLoop
             [ (id)operation setRunLoopThread:self.networkRunLoopThread];
         }
@@ -354,7 +353,6 @@
 
 
 - (void)addCPUOperation:(NSOperation *)operation finishedTarget:(id)target action:(SEL)action
-    // See comment in header.
 {
     [self addOperation:operation toQueue:self.queueForCPU finishedTarget:target action:action];
 }
@@ -365,27 +363,26 @@
 {
     // any thread
     if ( [keyPath isEqual:@"isFinished"] ) {
-        NSOperation *       operation;
-        NSOperationQueue *  queue;
-        
-        
         // we have 3 CFMutableDictionaryRef
         //          1) _runningOperationToTargetMap
         //          2) _runningOperationToActionMap
         //          3) _runningOperationToThreadMap
-        NSThread *          thread; // get from self->_runningOperationTo***Map dictionary
-        
+    
+        NSOperation *       operation;
         operation = (NSOperation *) object;
         assert([operation isKindOfClass:[NSOperation class]]);
         assert([operation isFinished]);
 
         // 通过添加监控时传入进来的参数获取 OperationQueue
+        NSOperationQueue *  queue;
         queue = (NSOperationQueue *) context;
         assert([queue isKindOfClass:[NSOperationQueue class]]);
 
         // 因为这里是 operate 完成调用前,最后一个方法,所以要删除 Observer
         [operation removeObserver:self forKeyPath:@"isFinished"];
         
+        //任何对核心 map 数据的操作都要,采用原子级别的锁定
+        NSThread *          thread; // get from self->_runningOperationToThreadMap dictionary
         @synchronized (self) {
             assert( CFDictionaryGetCount(self->_runningOperationToTargetMap) == CFDictionaryGetCount(self->_runningOperationToActionMap) );
             assert( CFDictionaryGetCount(self->_runningOperationToTargetMap) == CFDictionaryGetCount(self->_runningOperationToThreadMap) );
@@ -395,11 +392,11 @@
                 // 如果 thread 不为空的话,下面要用它执行 oprationDone 消息, 所以 ratain 一下.
                 [thread retain];
             }
-        }
+        }//锁定结束
         
         if (thread != nil) {
             //在调用addOperation:toQueue:finishedTarget:action:的 thread 上执行本类的 operationDone 操作
-            //主要作用是从 _runningOperationTo*** map 中删除已经添加的数据.因为也是在那个线程上向 map 添加的数据.
+            //主要作用是从 _runningOperationTo*** map 中删除已经添加的数据(因为也是在那个线程上向 map 添加的数据),并调用添加operation时指定的回调函数.
             [self performSelector:@selector(operationDone:) onThread:thread  withObject:operation waitUntilDone:NO];
             
             [thread release];
@@ -428,10 +425,9 @@
 
     // any thread
     assert(operation != nil);
-
     // Find the target/action, if any, in the map and then remove it.
     // 在一次,这里为什么  synchronized ? 因为对核心关键map数据的操作,有可能会和 cancel动作有竞争关系.
-    @synchronized (self) {
+    @synchronized (self) {//锁定操作开始
         assert( CFDictionaryGetCount(self->_runningOperationToTargetMap) == CFDictionaryGetCount(self->_runningOperationToActionMap) );
         assert( CFDictionaryGetCount(self->_runningOperationToTargetMap) == CFDictionaryGetCount(self->_runningOperationToThreadMap) );
 
@@ -448,7 +444,7 @@
         // 因为下面的 -cancelOperation: 可能赢得了竞争锁,已经从OperationMap里删除了.
         if (target != nil) {
             [target retain];
-            assert( thread == [NSThread currentThread] );
+            assert( thread == [NSThread currentThread] );//这里应该是同一个线程
 
             CFDictionaryRemoveValue(self->_runningOperationToTargetMap, operation);
             CFDictionaryRemoveValue(self->_runningOperationToActionMap, operation);
@@ -456,7 +452,7 @@
         }
         assert( CFDictionaryGetCount(self->_runningOperationToTargetMap) == CFDictionaryGetCount(self->_runningOperationToActionMap) );
         assert( CFDictionaryGetCount(self->_runningOperationToTargetMap) == CFDictionaryGetCount(self->_runningOperationToThreadMap) );
-    }
+    }//锁定操作结束
     
     // If we removed the operation, call the target/action.  However, we still have to 
     // test isCancelled here because -cancelOperation: might have cancelled it but 
@@ -481,7 +477,6 @@
 }
 
 - (void)cancelOperation:(NSOperation *)operation
-    // See comment in header.
 {
     id          target;
     SEL         action;

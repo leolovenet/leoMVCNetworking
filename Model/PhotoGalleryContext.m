@@ -45,6 +45,9 @@
 // 把 path 路径和 galleryURLString 相关, 然后返回一个配置好了的HTTP GET的 NSMutableURLRequest 对象
 // 如果参数 path 为 nil, 返回一个只有 galleryURLString 请求
 // 如果 path 不是 nil ,也不是一个有效的 URL path, 返回 fail
+// 当 path 为畸形时, url 可能为 nil
+
+// 在 model 层的Photo中 startThumbnailGet: 与 startPhotoGet: 中被调用
 - (NSMutableURLRequest *)requestToGetGalleryRelativeString:(NSString *)path
 {
     NSMutableURLRequest *   result = nil;
@@ -65,6 +68,7 @@
         url = [NSURL URLWithString:path relativeToURL:url];
         // url  e.g. ->  { @"images/IMG_0125.JPG -- http://Leo-MacBook-Pro.local:8888/TestGallery/index.xml" }
         // url may be nil because, while galleryURLString is guaranteed to be a valid URL, path may not be.
+        // 当 path 为畸形时, url 可能为 nil
     }
     
     // Call down to the network manager so that it can set up its stuff (notably the user agent string).

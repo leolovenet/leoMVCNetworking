@@ -109,11 +109,11 @@ XXX  7. init -> start -> cancel -> startOnRunLoopThreadThread -> cancelOnRunLoop
                     isReady 对象方法返回 Operation 是否准备好了.
  
             o 一个 NSOperationQueue 要么直接通过在其他的线程上执行它的 operation, 或者使用 libdispatch(即 GCD)分离出一个新的线程
-                总之结果就是, operation总是在一个分离的线程里执行,直到它们结束或被取消,而不管它们被设计为并发的,或者非并发.
+                总之结果就是, operation 总是在一个分离的线程里执行,直到它们结束或被取消,而不管它们被设计为并发的,或者非并发.
                 Note: In iOS 4 and later, operation queues use Grand Central Dispatch to execute operations.
  
             o NSOperationQueue 有两种不同类型的队列：主队列 和 自定义队列。主队列运行在主线程之上，而自定义队列在后台执行
-                    (本类被 NetworkMangeer 管理,是否设定runLoopThread. 然后决定在那个线程运行)
+                    (本类被 NetworkMangeer 管理是否设定runLoopThread. 然后决定在那个线程运行)
  
             o 在两种类型中，这些队列所处理的任务都使用 NSOperation 的子类来表述 (就是本类).
  
@@ -129,6 +129,27 @@ XXX  7. init -> start -> cancel -> startOnRunLoopThreadThread -> cancelOnRunLoop
  
             o 你可以通过 maxConcurrentOperationCount 属性来控制一个特定队列中可以有多少个 operation 参与并发执行 (看 NetworkManager 类的 ini 方法,就是设置了此值)
  
+ 
+         ► 1) Concurrent Versus Non-Concurrent Operations 并发 与 非并发
+         如果你计划手工执行一个 Operation 对象(手工调用Operation 对象的 start 方法) ,而不是把它添加到一个 queue ,那么你可以设计你的 Operation 以并发的方式 或者 非并发的方式执行.
+         Operation 对象默认是 非并发的.
+         在非并发operation中, Operation的任务是同步执行的. 即, operation对象不创建另一个独立的线程去执行那个任务.
+         这样, 当你在代码中调用一个非并发 Operation 的 start 方法时,这个 Operation 立即在你当前的线程里执行. 当这个 start 方法 reuturn 的时候, 这个任务就被执行完了.
+         跟同步运行的非并发 Operation 相比, 并发 Operation 是异步的运行.换句话说,当您调用一个并发 Operation 的 start 方法时, 这个方法可能立即就 return,  即使对应的任务没有完成.这种可能发生在这种情况下,
+         (1) 当 Operation 对象创建了一个新的线程去执行对应的任务.
+         (2) 这个 Operation 对象调用了一个异步函数.
+         
+         
+         定义一个并发 operation 需要做更多的工作,因为,你不得不监控你任务的运行状态, 并用 KVO 通知的方式报告状态的改变.
+         但是,当你想确保手工执行的 Operation 不堵塞运行线程的话,那么定义并发 Operation 还是很有用的.
+         
+         ► 2) 如果你定义一个 operation 为并发的形式的话. 你必须重写:
+         - (BOOL) isConcurrent 方法,并返回 YES.
+         - (void) start  方法, 并用它去初始化你的操作. 并且,你重写的 start 方法不能调用 [super start]
+         此时,你若不是自己手工掉用 - (void)start 方法执行这个 Operation 的话, 你不必重写 - (void)main 方法.
+         - (BOOL) isFinished
+         - (BOOL) isExecuting
+ 
 
     总结:
         本类是在 start 方法内调用执行异步方法,并发 Operation
@@ -139,19 +160,25 @@ XXX  7. init -> start -> cancel -> startOnRunLoopThreadThread -> cancelOnRunLoop
             [2] queueForNetworkManagement 
             [3] queueForCPU
  
-        添加到 NSOperationQueue 里的 operation 会使用 GCD 执行(iOS 4 和以后,operation queues 用 GCD 执行 operation).
-        operation 执行完毕以后, 会在执行本类实例对象入 Queue 时操作的 thread 上, 向当时指定好的 target 上发送当时指定好的 seletor.
+        添加到 NSOperationQueue 里的 operation 会使用 GCD 执行(iOS 4 和以后, operation queues 用 GCD 执行 operation).
+        operation 执行完毕以后, 会在执行本类实例对象入 Queue 时操作的 thread 上向当时指定好的 target 上发送当时指定好的 seletor.
  
         例如,我们在main thread上执行get http 请求,添加一个 RetringHTTPOperatin(继承自本类) 对象,
-        到 NetworkManger 类里的 queueForNetworkManagement 队列中,
+        到 NetworkManger 类里的 queueForNetworkManagement (网络管理)队列中,
         并指定好了回执 target 的 selecter ,当做此operation完成后的回调函数.
         那么 NetworkManger 会记录当时执行这个入列操作的 thread(本例为main thread),
         并当operation在queueForNetworkManagement中执行完成以后,
         在此thread(本例为main thread)上向target发送selecter方法.
         具体的实例可以查看 RetryingHTTPOperation.m 的 - (void)startGetOperation 方法里的代码.
  
-        这种逻辑是可以嵌套的,比如,在 RetringHTTPOperatin 中在向 Networkmanger 的 queueForNetworkTransfers 入列一个 QHTTPOperation(同样继承自本类) 操作,
-        并等待QHTTPOperation完成以后, 在执行 RetringHTTPOperatin 的 Networkmanger 的 queueForNetworkManagement 中执行一个回调函数.
+        这种逻辑是可以嵌套的,比如,在 RetringHTTPOperatin 中在向 Networkmanger 的 queueForNetworkTransfers(网络传输队列) 入列一个 QHTTPOperation(同样继承自本类) 操作,
+        并等待QHTTPOperation完成以后, 在执行 RetringHTTPOperatin 的 Networkmanger 的 queueForNetworkManagement(网络管理队列) 中执行一个回调函数.
+ 
+        继承自本类的类有:
+            QHTTPOperation
+            QReachabilityOperation
+            RetryingHTTPOperation
+ 
 */
 
 
@@ -191,7 +218,7 @@ XXX  7. init -> start -> cancel -> startOnRunLoopThreadThread -> cancelOnRunLoop
 @synthesize runLoopModes  = _runLoopModes;
 @synthesize error         = _error;
 
-// 返回真正起作用的 runloop 线程, 返回值要么是用户设置 self.runLoopThread 的值,要么是 main 线程
+// 返回运行本 operation 的 runloop 线程, 返回值要么是用户设置 self.runLoopThread 的值,要么是 main 线程
 - (NSThread *)actualRunLoopThread
 // Returns the effective run loop thread, that is, the one set by the user
 // or, if that's not set, the main thread.
@@ -286,10 +313,11 @@ XXX  7. init -> start -> cancel -> startOnRunLoopThreadThread -> cancelOnRunLoop
     }
 }
 
-#pragma mark - 被 start 调用,  在 run loop thread 上运行的代码
+#pragma mark - 被 start 调用,  在 runLoopThread 上运行的代码
+
+// Starts the operation.  The actual -start method is very simple,
+// deferring all of the work to be done on the run loop thread by this method.
 - (void)startOnRunLoopThread
-    // Starts the operation.  The actual -start method is very simple, 
-    // deferring all of the work to be done on the run loop thread by this method.
 {
     // 确保是在 ActualRunLoopThread 中执行,而不是调用 start 的线程中执行
     assert(self.isActualRunLoopThread);
@@ -398,11 +426,11 @@ XXX  7. init -> start -> cancel -> startOnRunLoopThreadThread -> cancelOnRunLoop
         最后, 我们不必担心跟其他线程竞争调用 -start 方法的竞争关系, 因为在同一时间只允许一个线程开始操作.
      
      leo:
-        重写父类的该方法,因为我们是 concurrent 操作, 所以这里永远不要调用[ super start ]方法
+        这里是重写父类的该方法,因为我们是 concurrent 操作, 所以这里永远不要调用[ super start ]方法
         如果,一个 operatin 已经入列 queue 的话,就不能再手工调用这个方法. 这个方法只能被调用一次.
     */
     
-    self.state = kQRunLoopOperationStateExecuting;
+    self.state = kQRunLoopOperationStateExecuting;//这里会发出 KVO 通知
     //这之前的操作都是在主线程上执行的,下面的操作,有可能在主线程,也有可能是在 NetworkManger 类的 networkRunLoopThread 线程上执行,关键要看本类有没有设置runLoopThread
     [self performSelector:@selector(startOnRunLoopThread)
                  onThread:self.actualRunLoopThread      // 或者为 main's thread run loop ,或者 自定义的
@@ -419,9 +447,8 @@ XXX  7. init -> start -> cancel -> startOnRunLoopThreadThread -> cancelOnRunLoop
     BOOL    oldValue;
 
     // any thread 任何线程都可能执行这个操作
-
     // We need to synchronise here to avoid state changes to isCancelled and state while we're running.
-    // 我们需要在这里 synchronise, 以免我们正在运行的线程状态被改变到 isCancelled,
+    // 我们需要在这里 synchronise, 去避免cancel掉我们正在运行的状态已经是 cancel 的情况.
     // 因为任何线程都可以执行这个方法 cancel 掉一个 operation, 而我们要 cacel 运行在 self.actualRunLoopThread
     
     

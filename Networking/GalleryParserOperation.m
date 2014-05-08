@@ -118,10 +118,10 @@ NSString * kGalleryParserResultThumbnailPath = @"thumbnailPath";
     
     success = [self.parser parse];
     if ( ! success ) { //如果分析 xml 动作没有成功执行
-    
+        
         // If our parser delegate callbacks already set an error, we ignore the error coming back from NSXMLParser.
         // Our delegate callbacks have the most accurate error info.
-    
+        
         if (self.error == nil) {
             self.error = [self.parser parserError];
             assert(self.error != nil);
@@ -130,27 +130,27 @@ NSString * kGalleryParserResultThumbnailPath = @"thumbnailPath";
     
     
     
-    // In the debug version, if we've been told to delay, do so.  This gives 
+    // In the debug version, if we've been told to delay, do so.  This gives
     // us time to test the cancellation path.
-    #if ! defined(NDEBUG)
-        {
-            while (self.debugDelaySoFar < self.debugDelay) {
-                // We always sleep in one second intervals.  I could do the maths to 
-                // sleep for the remaining amount of time or one second, whichever 
-                // is the least, but hey, this is debugging code.
-                
-                [NSThread sleepForTimeInterval:1.0];
-                self.debugDelaySoFar += 1.0;
-                
-                if ( [self isCancelled] ) {
-                    // If we notice the cancel, we override any error we got from the XML.
-                    self.error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSUserCancelledError userInfo:nil];
-                    break;
-                }
-            }
+#if ! defined(NDEBUG)
+  {
+    while (self.debugDelaySoFar < self.debugDelay) {
+        // We always sleep in one second intervals.  I could do the maths to
+        // sleep for the remaining amount of time or one second, whichever
+        // is the least, but hey, this is debugging code.
+        
+        [NSThread sleepForTimeInterval:1.0];
+        self.debugDelaySoFar += 1.0;
+        
+        if ( [self isCancelled] ) {
+            // If we notice the cancel, we override any error we got from the XML.
+            self.error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSUserCancelledError userInfo:nil];
+            break;
         }
-    #endif
-
+    }
+  }
+#endif
+    
     if (self.error == nil) {
         [[QLog log] logOption:kLogOptionXMLParseDetails withFormat:@"xml parse success"];
     } else {

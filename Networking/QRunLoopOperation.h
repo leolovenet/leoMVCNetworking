@@ -53,7 +53,7 @@ typedef NS_ENUM(NSUInteger, QRunLoopOperationState){
 @end
 
 
-#pragma mark - QRunLoopOperation  Categories ,子类需要重写或者调用的三个方法
+#pragma mark - QRunLoopOperation  Categories ,子类需要重写,调用的三个方法
 @interface QRunLoopOperation (SubClassSupport)
 
 // Override points
